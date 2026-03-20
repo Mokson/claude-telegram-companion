@@ -57,8 +57,8 @@ Ask the user before deleting anything. Offer to remove each category (files, hoo
 Check if voice transcription dependencies are available:
 
 1. Check `ffmpeg` is in PATH: `which ffmpeg`
-2. Check `whisper-cpp` is in PATH: `which whisper-cpp`
-3. If whisper-cpp found, auto-detect model files in common locations:
+2. Check `whisper-cli` is in PATH: `which whisper-cli`
+3. If whisper-cli found, auto-detect model files in common locations:
    - `/usr/local/share/whisper.cpp/models/`
    - `$(brew --prefix 2>/dev/null)/share/whisper.cpp/models/`
    - `~/.local/share/whisper.cpp/models/`

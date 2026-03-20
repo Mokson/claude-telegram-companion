@@ -48,13 +48,13 @@ Add to `~/.claude/channels/telegram/command-config.json`:
 
 ```json
 "transcription": {
-  "binary": "whisper-cpp",
+  "binary": "whisper-cli",
   "model": "/path/to/ggml-base.en.bin",
   "language": "en"
 }
 ```
 
-Needs `ffmpeg` and `whisper-cpp` in PATH. Without them, voice messages arrive as-is with the audio file path.
+Needs `ffmpeg` and `whisper-cli` in PATH. Without them, voice messages arrive as-is with the audio file path.
 
 ## Configuration
 

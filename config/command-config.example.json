@@ -15,7 +15,7 @@
   },
   "transcription": {
     "enabled": true,
-    "binary": "whisper-cpp",
+    "binary": "whisper-cli",
     "model": "/path/to/ggml-base.en.bin",
     "language": "en"
   }
