@@ -25,8 +25,24 @@ const { spawn } = require('child_process');
 
 const MODE = process.argv[2] || 'post';
 
-const TELEGRAM_PLUGIN_PREFIX = 'mcp__plugin_telegram_telegram__';
-const TELEGRAM_PROGRESS_PREFIX = 'mcp__telegram_progress__';
+// Match both direct and plugin-installed tool name formats.
+// Direct: mcp__telegram__react, mcp__telegram_progress__send
+// Plugin: mcp__plugin_telegram_telegram__react, mcp__plugin_awesome_claude_telegram_telegram_progress__send
+function isTelegramChannelTool(name) {
+  return name.startsWith('mcp__plugin_telegram_telegram__')
+    || name.startsWith('mcp__telegram__');
+}
+function isProgressTool(name) {
+  return name.includes('telegram_progress__');
+}
+function isTelegramTool(name) {
+  return isTelegramChannelTool(name) || isProgressTool(name);
+}
+function getTelegramAction(name) {
+  // Extract the tool name after the last __
+  const parts = name.split('__');
+  return parts[parts.length - 1] || '';
+}
 const DAEMON_SCRIPT = path.join(__dirname, 'telegram-typing-daemon.js');
 
 const tmpDir = os.tmpdir();
@@ -38,12 +54,8 @@ const CURRENT_TOOL_FILE = path.join(tmpDir, 'telegram-current-tool.txt');
 
 const CONFIG_FILE = path.join(os.homedir(), '.claude', 'channels', 'telegram', 'command-config.json');
 
-const SKIP_TOOLS = new Set([
-  'mcp__plugin_telegram_telegram__react',
-  'mcp__plugin_telegram_telegram__edit_message',
-  'mcp__telegram_progress__send',
-  'mcp__telegram_progress__edit',
-]);
+// Actions that should not appear in progress log
+const SKIP_ACTIONS = new Set(['react', 'edit_message', 'send', 'edit', 'reply']);
 
 // Lazy-loaded config and token (only read when Telegram context is active)
 let _config = null;
@@ -102,7 +114,7 @@ process.stdin.on('end', () => {
 
 function handlePreToolUse(toolName, toolInput, sessionId) {
   // Block react when reactions are disabled; always establish context
-  if (toolName === 'mcp__plugin_telegram_telegram__react') {
+  if (isTelegramChannelTool(toolName) && getTelegramAction(toolName) === 'react') {
     const chatId = toolInput.chat_id;
     if (!chatId) process.exit(0);
     if (!getConfig().reaction) {
@@ -120,11 +132,7 @@ function handlePreToolUse(toolName, toolInput, sessionId) {
   const ctx = readActive();
   if (!ctx || !ctx.chat_id || isStale(ctx)) process.exit(0);
   if (ctx.session_id && ctx.session_id !== sessionId) process.exit(0);
-  if (SKIP_TOOLS.has(toolName)) process.exit(0);
-
-  // Skip telegram tools
-  if (toolName.startsWith(TELEGRAM_PLUGIN_PREFIX)) process.exit(0);
-  if (toolName.startsWith(TELEGRAM_PROGRESS_PREFIX)) process.exit(0);
+  if (isTelegramTool(toolName)) process.exit(0);
 
   const label = formatToolLabel(toolName, toolInput);
   if (!label) process.exit(0);
@@ -139,16 +147,11 @@ function handlePostToolUse(data, toolName, toolInput) {
   const sessionId = data.session_id || '';
   const toolOutput = data.tool_output || '';
 
-  const isPluginTool = toolName.startsWith(TELEGRAM_PLUGIN_PREFIX);
-  const isProgressTool = toolName.startsWith(TELEGRAM_PROGRESS_PREFIX);
-
-  if (isPluginTool || isProgressTool) {
+  if (isTelegramTool(toolName)) {
     const chatId = toolInput.chat_id;
     if (!chatId) process.exit(0);
 
-    const action = isPluginTool
-      ? toolName.replace(TELEGRAM_PLUGIN_PREFIX, '')
-      : toolName.replace(TELEGRAM_PROGRESS_PREFIX, '');
+    const action = getTelegramAction(toolName);
 
     // react → always establish fresh context for this message
     if (action === 'react') {
@@ -189,7 +192,7 @@ function handlePostToolUse(data, toolName, toolInput) {
   if (!ctx || !ctx.chat_id || isStale(ctx)) process.exit(0);
   // Only the originating session contributes to progress
   if (ctx.session_id && ctx.session_id !== sessionId) process.exit(0);
-  if (SKIP_TOOLS.has(toolName)) process.exit(0);
+  if (isTelegramTool(toolName)) process.exit(0);
 
   // Error handling: no progress message sent yet + tool failed
   // Send error directly to Telegram (don't rely on Claude following additionalContext)

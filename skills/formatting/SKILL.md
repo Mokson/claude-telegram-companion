@@ -1,5 +1,5 @@
 ---
-name: telegram-formatting
+name: formatting
 description: This skill should be used when replying to Telegram messages, formatting text for Telegram, using the telegram-progress send or edit tools, or when the user asks to "format for Telegram", "style Telegram message", or "send formatted message". Provides HTML formatting rules for Telegram Bot API messages. Not triggered by general markdown or HTML questions unrelated to Telegram.
 ---
 
