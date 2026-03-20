@@ -1,6 +1,6 @@
 ---
-name: init
-description: This skill should be used when the user asks to "initialize awesome-claude-telegram", "set up telegram companion", "migrate telegram files", or runs /awesome-claude-telegram:init. Verifies prerequisites, creates default config, and cleans up legacy scattered files.
+name: setup
+description: This skill should be used when the user asks to "set up awesome-claude-telegram", "set up telegram companion", "migrate telegram files", or runs /awesome-claude-telegram:setup. Verifies prerequisites, creates default config, and cleans up legacy scattered files.
 allowed-tools:
   - Read
   - Write

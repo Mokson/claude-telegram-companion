@@ -22,7 +22,7 @@ Companion plugin that upgrades Claude Code's Telegram channel with rich formatti
 /plugin install awesome-claude-telegram@awesome-claude-telegram
 ```
 
-Restart Claude Code, then run `/awesome-claude-telegram:init`.
+Restart Claude Code, then run `/awesome-claude-telegram:setup`.
 
 **Requires:** Official `telegram` plugin enabled, [Bun](https://bun.sh).
 
