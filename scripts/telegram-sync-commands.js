@@ -274,10 +274,13 @@ function configHas(set, skill) {
 }
 
 function buildCommands(skills, config) {
-  const excludePlugins = new Set(config.excludePlugins || []);
-  const excludeProject = new Set(config.excludeProject || []);
-  const include = config.include || {};
-  const extra = config.extra || [];
+  // Support both v2 (commands.*) and v1 (flat) schema
+  const cmds = config.commands || {};
+  const exclude = cmds.exclude || {};
+  const excludePlugins = new Set(exclude.plugins || config.excludePlugins || []);
+  const excludeProject = new Set(exclude.skills || config.excludeProject || []);
+  const include = cmds.aliases || config.include || {};
+  const extra = cmds.extra || config.extra || [];
   const seen = new Set();
   const commands = [];
 

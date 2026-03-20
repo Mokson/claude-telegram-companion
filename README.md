@@ -46,12 +46,35 @@ Restart Claude Code, then run:
 
 Edit `~/.claude/channels/telegram/command-config.json`:
 
-| Setting | Default | What it does |
-|---------|---------|--------------|
-| `progress.reaction` | `false` | React with an emoji when a message arrives |
-| `progress.statusUpdates` | `true` | Show live step-by-step progress |
-| `include` | `{}` | Map skills to Telegram `/commands` |
-| `excludePlugins` | `[]` | Hide plugins from the command menu |
+```json
+{
+  "commands": {
+    "exclude": {
+      "plugins": ["plugin-dev@claude-plugins-official"],
+      "skills": ["humanizer", "blog-writing"]
+    },
+    "aliases": {
+      "tasks:todoist_sync": { "command": "todosync", "description": "Organize tasks" }
+    },
+    "extra": [
+      { "command": "help", "description": "Show available commands" }
+    ]
+  },
+  "progress": {
+    "reaction": false,
+    "statusUpdates": true
+  }
+}
+```
+
+| Section | Key | What it does |
+|---------|-----|--------------|
+| `commands.exclude.plugins` | Plugin keys to hide entirely from the command menu |
+| `commands.exclude.skills` | Individual skill names to hide |
+| `commands.aliases` | Map a skill to a short `/command` name |
+| `commands.extra` | Add commands that don't map to any skill |
+| `progress.reaction` | React with emoji on message receipt |
+| `progress.statusUpdates` | Show live step-by-step progress during work |
 
 Changes to `progress.*` take effect on session restart.
 
