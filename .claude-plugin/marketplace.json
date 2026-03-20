@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "awesome-claude-telegram",
-      "source": ".",
+      "source": "./",
       "description": "Rich formatting, live progress, voice transcription, and error forwarding for Telegram."
     }
   ]
