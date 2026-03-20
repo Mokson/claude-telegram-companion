@@ -1,96 +1,73 @@
 # awesome-claude-telegram
 
-Companion plugin for the official [telegram@claude-plugins-official](https://github.com/anthropics/claude-code) Telegram channel. Adds features the official plugin doesn't provide.
+The official Telegram plugin gives Claude a chat window. This plugin makes it actually good.
 
-## Features
+**Before:** Claude sends plain text, typing indicator vanishes after 5 seconds, long tasks produce silence, errors disappear into the terminal.
 
-- **HTML Formatting** - `send` and `edit` MCP tools with `parse_mode: "HTML"` support (bold, italic, code, pre, links, blockquotes)
-- **Automatic Progress Indicators** - Background daemon keeps "typing..." visible and shows a live step log during long-running tasks
-- **Error Forwarding** - Automatically sends tool errors to Telegram when Claude fails silently
-- **Command Sync** - Syncs discovered skills to Telegram's BotFather command menu on session start
-- **Formatting Skill** - HTML entity reference loaded on demand when formatting Telegram messages
+**After:** Rich HTML formatting, persistent typing indicators, live progress tracking with step-by-step updates, automatic error forwarding, and your skills auto-synced to the Telegram command menu.
 
-## Prerequisites
+## What You Get
 
-- [Claude Code](https://claude.ai/code) with the official `telegram` plugin enabled
-- [Bun](https://bun.sh) runtime (used by the MCP server)
-- A Telegram bot token configured via the official plugin (`/telegram:configure`)
+**Rich Formatting** - Bold, italic, code blocks, links, blockquotes. Claude's replies look professional instead of flat text walls.
+
+**Live Progress** - When Claude runs a multi-step task (syncing Todoist, extracting wisdom from a video, searching code), Telegram shows each step as it completes:
+
+```
+> Todoist: find tasks by date
+> Todoist: get overview
+> Todoist full sync           (in progress)
+```
+
+**Typing That Doesn't Lie** - The "typing..." indicator stays visible for the entire duration of work, including during subagent runs that take minutes.
+
+**Error Forwarding** - If a tool fails before Claude sends a reply, the error goes to Telegram automatically. No more staring at a chat wondering if anything happened.
+
+**Command Menu Sync** - Your installed skills appear in Telegram's `/` command menu. Type `/` and see what Claude can do.
 
 ## Installation
 
-Add the marketplace source and enable the plugin in `~/.claude/settings.json`:
-
-```json
-{
-  "extraKnownMarketplaces": {
-    "awesome-claude-telegram": {
-      "source": {
-        "source": "github",
-        "repo": "Mokson/awesome-claude-telegram"
-      }
-    }
-  },
-  "enabledPlugins": {
-    "awesome-claude-telegram@awesome-claude-telegram": true
-  }
-}
+```
+/plugin marketplace add Mokson/awesome-claude-telegram
+/plugin install awesome-claude-telegram@awesome-claude-telegram
 ```
 
-Then restart Claude Code and run:
+Restart Claude Code, then run:
 
 ```
 /awesome-claude-telegram:init
 ```
 
-This verifies prerequisites, creates default config, and offers to clean up any legacy scattered files.
+### Prerequisites
+
+- Official `telegram` plugin enabled and configured (`/telegram:configure`)
+- [Bun](https://bun.sh) runtime
 
 ## Configuration
 
-The plugin reads config from `~/.claude/channels/telegram/command-config.json`:
+Edit `~/.claude/channels/telegram/command-config.json`:
 
-```json
-{
-  "excludePlugins": [],
-  "include": {
-    "tasks:todoist_sync": { "command": "todosync", "description": "Organize tasks" }
-  },
-  "excludeProject": [],
-  "extra": [
-    { "command": "help", "description": "Show available commands" }
-  ],
-  "progress": {
-    "reaction": false,
-    "statusUpdates": true
-  }
-}
-```
+| Setting | Default | What it does |
+|---------|---------|--------------|
+| `progress.reaction` | `false` | React with an emoji when a message arrives |
+| `progress.statusUpdates` | `true` | Show live step-by-step progress |
+| `include` | `{}` | Map skills to Telegram `/commands` |
+| `excludePlugins` | `[]` | Hide plugins from the command menu |
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `progress.reaction` | `false` | Show emoji reaction on message receipt |
-| `progress.statusUpdates` | `true` | Show live progress steps during work |
-| `excludePlugins` | `[]` | Plugin keys to exclude from command menu |
-| `include` | `{}` | Manual skill-to-command mappings |
-| `excludeProject` | `[]` | Project skills to exclude from menu |
-| `extra` | `[]` | Additional commands to register |
+Changes to `progress.*` take effect on session restart.
 
-Changes to `progress.*` require a session restart.
+## How It Works
 
-## Architecture
+This plugin sits alongside the official Telegram plugin. The official plugin handles message delivery (polling, access control, inbound routing). This plugin adds everything on top:
 
-```
-Official telegram plugin          awesome-claude-telegram
-(message bridge)                  (companion enhancements)
+| Official plugin | This plugin |
+|-----------------|-------------|
+| `reply` (plain text) | `send` (HTML formatting) |
+| `edit_message` (plain text) | `edit` (HTML formatting) |
+| 5-second typing indicator | Persistent typing + progress steps |
+| Silent tool failures | Error auto-forwarded to chat |
+| No command menu | Skills synced to BotFather |
 
-reply (plain text)                send (HTML formatting)
-react (emoji)                     edit (HTML formatting)
-edit_message (plain text)         typing keepalive daemon
-                                  progress step tracking
-                                  error forwarding
-                                  command sync
-```
-
-The companion reads the same bot token and access.json as the official plugin. It makes outbound API calls only (no polling, no message ingestion).
+Same bot token, same access control. No conflicts.
 
 ## License
 
