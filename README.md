@@ -2,10 +2,9 @@
 
 Companion plugin that upgrades Claude Code's Telegram channel with rich formatting, live progress, and voice transcription.
 
-<p>
-  <img src="assets/typing.png" width="220" alt="Persistent typing indicator" />
-  <img src="assets/progress.png" width="320" alt="Live progress tracking" />
-</p>
+<img src="assets/typing.png" width="220" alt="Persistent typing indicator" />
+
+<img src="assets/progress.png" width="320" alt="Live progress tracking" />
 
 | Without | With |
 | --- | --- |
