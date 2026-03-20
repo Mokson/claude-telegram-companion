@@ -1,6 +1,6 @@
 # awesome-claude-telegram
 
-The official Telegram plugin gives Claude a chat window. This makes it actually good.
+Companion plugin that upgrades Claude Code's Telegram channel with rich formatting, live progress, and voice transcription.
 
 | Without | With |
 | --- | --- |
