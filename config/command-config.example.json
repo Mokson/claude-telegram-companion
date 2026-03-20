@@ -1,0 +1,13 @@
+{
+  "excludePlugins": [],
+  "include": {},
+  "excludeProject": [],
+  "extra": [
+    { "command": "help", "description": "Show available commands and capabilities" }
+  ],
+  "progress": {
+    "reaction": false,
+    "statusUpdates": true,
+    "_note": "Changes require session restart to take effect"
+  }
+}

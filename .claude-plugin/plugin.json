@@ -1,0 +1,18 @@
+{
+  "name": "awesome-claude-telegram",
+  "description": "Companion enhancements for the official Telegram plugin: HTML formatting, progress indicators, typing keepalive, error forwarding, command sync.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Mokson",
+    "url": "https://github.com/Mokson"
+  },
+  "repository": "https://github.com/Mokson/awesome-claude-telegram",
+  "license": "MIT",
+  "keywords": [
+    "telegram",
+    "progress",
+    "formatting",
+    "companion",
+    "channel"
+  ]
+}
