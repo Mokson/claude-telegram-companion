@@ -1,0 +1,16 @@
+{
+  "name": "awesome-claude-telegram",
+  "owner": {
+    "name": "Mokson"
+  },
+  "metadata": {
+    "description": "Companion enhancements for Claude Code's Telegram channel"
+  },
+  "plugins": [
+    {
+      "name": "awesome-claude-telegram",
+      "source": ".",
+      "description": "Rich formatting, live progress, voice transcription, and error forwarding for Telegram."
+    }
+  ]
+}
