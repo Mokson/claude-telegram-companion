@@ -52,9 +52,28 @@ Check `~/.claude/CLAUDE.md` for a `## Telegram` section that is now provided by 
 
 Ask the user before deleting anything. Offer to remove each category (files, hook entries, MCP entries, CLAUDE.md section).
 
+## Transcription Setup
+
+Check if voice transcription dependencies are available:
+
+1. Check `ffmpeg` is in PATH: `which ffmpeg`
+2. Check `whisper-cpp` is in PATH: `which whisper-cpp`
+3. If whisper-cpp found, auto-detect model files in common locations:
+   - `/usr/local/share/whisper.cpp/models/`
+   - `$(brew --prefix 2>/dev/null)/share/whisper.cpp/models/`
+   - `~/.local/share/whisper.cpp/models/`
+
+If both tools are found and a model is detected:
+- Read the existing `command-config.json`
+- If no `transcription` section exists, offer to add it with the detected binary and model paths
+- If `transcription` section already exists, report its current settings
+
+If either tool is missing, report which is missing and note that voice transcription is optional. Voice messages will still be received but arrive as "(voice message)" without transcription.
+
 ## Report
 
 Summarize:
 - Prerequisites: pass/fail
 - Config: created or already exists
 - Legacy files found and actions taken
+- Transcription: available (binary + model) or not configured

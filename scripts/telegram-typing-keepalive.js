@@ -101,6 +101,20 @@ process.stdin.on('end', () => {
 // --- PreToolUse: write current tool to file for daemon ---
 
 function handlePreToolUse(toolName, toolInput, sessionId) {
+  // Block react when reactions are disabled; always establish context
+  if (toolName === 'mcp__plugin_telegram_telegram__react') {
+    const chatId = toolInput.chat_id;
+    if (!chatId) process.exit(0);
+    if (!getConfig().reaction) {
+      killDaemon();
+      try { fs.unlinkSync(LOG_FILE); } catch {}
+      try { fs.unlinkSync(CURRENT_TOOL_FILE); } catch {}
+      writeActive({ chat_id: chatId, session_id: sessionId, timestamp: now() });
+      process.stdout.write(JSON.stringify({ decision: 'block', reason: 'Reactions are disabled' }));
+    }
+    process.exit(0);
+  }
+
   if (!getConfig().statusUpdates) process.exit(0);
 
   const ctx = readActive();

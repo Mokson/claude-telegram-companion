@@ -12,5 +12,11 @@
   "progress": {
     "reaction": false,
     "statusUpdates": true
+  },
+  "transcription": {
+    "enabled": true,
+    "binary": "whisper-cpp",
+    "model": "/path/to/ggml-base.en.bin",
+    "language": "en"
   }
 }

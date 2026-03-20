@@ -129,33 +129,7 @@ async function sendWithHtmlFallback<T>(
   }
 }
 
-// --- Config (read once at startup) ---
-
-type ProgressConfig = { reaction: boolean; statusUpdates: boolean };
-
-function loadConfig(): ProgressConfig {
-  const defaults: ProgressConfig = { reaction: false, statusUpdates: true };
-  try {
-    const raw = JSON.parse(
-      readFileSync(join(STATE_DIR, "command-config.json"), "utf8")
-    );
-    if (raw.progress) {
-      if (typeof raw.progress.reaction === "boolean")
-        defaults.reaction = raw.progress.reaction;
-      if (typeof raw.progress.statusUpdates === "boolean")
-        defaults.statusUpdates = raw.progress.statusUpdates;
-    }
-  } catch {}
-  return defaults;
-}
-
-const config = loadConfig();
-
 // --- MCP Server ---
-
-const reactionInstruction = config.reaction
-  ? 'On receipt of a Telegram message, call the plugin react tool with emoji "👀" on the incoming message_id.'
-  : "Do NOT call the plugin react tool. Reactions are disabled.";
 
 const mcp = new Server(
   { name: "telegram-progress", version: "1.0.0" },
@@ -166,7 +140,7 @@ const mcp = new Server(
       'Do NOT use them unless you are handling a message from the Telegram channel ' +
       '(indicated by <channel source="telegram"> tags in the conversation). ' +
       "For normal terminal interactions, ignore these tools entirely. " +
-      reactionInstruction,
+      "Do NOT call the plugin react tool. Reactions are managed by hooks.",
   }
 );
 

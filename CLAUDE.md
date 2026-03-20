@@ -27,11 +27,11 @@ Do NOT wrap entire messages in `<pre>` or `<code>`. These are for actual code, c
 
 ### Reactions
 
-Follow the `telegram-progress` MCP server instructions for whether to react. The server reads the `progress.reaction` config at startup and tells you whether to use reactions or not. Do NOT react on completion or failure.
+Always call `react` with emoji `👀` on the incoming message as the first step. A PreToolUse hook reads `progress.reaction` from `command-config.json` and blocks the API call when reactions are disabled, while still establishing the context needed for progress tracking. Do NOT react on completion or failure.
 
 ### Progress indicators
 
-Progress is **fully automatic**. A PostToolUse hook detects Telegram context from `react` and spawns a background daemon that:
+Progress is **fully automatic**. Hooks establish Telegram context from `react` and spawn a background daemon that:
 
 - Keeps "typing..." visible for up to 5 minutes (including during subagent runs)
 - Edits the reply message with a live step log showing each tool as it completes
@@ -40,7 +40,13 @@ Progress is **fully automatic**. A PostToolUse hook detects Telegram context fro
 
 Follow this flow:
 
-1. `react` with `👀` on the incoming message (only if the server instructions say to react)
+1. `react` with `👀` on the incoming message
 2. Do the actual work (tool calls, subagents, etc.) - progress updates automatically
 3. On success: `telegram-progress` `send` with the final formatted answer
 4. On failure: `telegram-progress` `send` with the error message
+
+### Media Messages
+
+Voice/audio messages are auto-transcribed by the plugin and arrive as text. If transcription is not configured, they arrive as "(voice message)" with `audio_path` in meta.
+
+Documents arrive with `document_path` and `file_name`. Read if text/PDF. Photos: `image_path` - Read with Read tool. Videos: `video_path` - acknowledge receipt.
