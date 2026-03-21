@@ -2,8 +2,8 @@
 
 Drop-in companion for the official Telegram plugin. Adds live progress tracking, persistent typing, error forwarding, command menus, MarkdownV2 formatting, and voice transcription.
 
-<img src="assets/typing.png" width="220" alt="Persistent typing indicator" />
-<img src="assets/progress.png" width="320" alt="Live progress tracking" />
+<img src="assets/progress.gif" width="320" alt="Live progress tracking" />
+<img src="assets/commands.png" width="320" alt="Telegram command menu" />
 
 | Without | With |
 | --- | --- |
