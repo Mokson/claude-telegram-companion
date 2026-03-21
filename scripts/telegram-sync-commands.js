@@ -374,12 +374,19 @@ async function main() {
     return;
   }
 
-  // 2. Read config
-  const config = readJSON(path.join(TELEGRAM_DIR, 'command-config.json'));
-  if (!config) {
-    process.stderr.write('telegram-sync-commands: no command-config.json found\n');
-    return;
-  }
+  // Inject companion instructions (Claude Code surfaces SessionStart stdout as <system-reminder>)
+  process.stdout.write([
+    '[telegram-companion] When handling Telegram messages:',
+    '1. FIRST call react with emoji \u{1F440} on the incoming message (enables progress tracking).',
+    '2. Use reply with format: "markdownv2" for responses. Escape _ * [ ] ( ) ~ > # + - = | { } . ! outside code blocks.',
+    '3. Voice/audio messages (attachment_kind: voice/audio) have attachment_file_id. Use the transcribe skill.',
+  ].join('\n') + '\n');
+
+  // 2. Read config (optional; use defaults if missing)
+  const config = readJSON(path.join(TELEGRAM_DIR, 'command-config.json')) || {
+    commands: { exclude: { plugins: [], skills: [] }, aliases: {}, extra: [] },
+    progress: { statusUpdates: true }
+  };
 
   // 3. Discover skills
   const skills = discoverSkills();

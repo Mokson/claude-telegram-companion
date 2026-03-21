@@ -21,7 +21,7 @@ Companion plugin that adds live progress tracking, voice transcription, and comm
 /plugin install claude-telegram-companion@claude-telegram-companion
 ```
 
-Restart Claude Code, then run `/claude-telegram-companion:setup`.
+Restart Claude Code. No setup steps needed.
 
 **Requires:** Official `telegram` plugin enabled.
 
@@ -35,7 +35,7 @@ The official plugin handles polling, message delivery, and formatted replies. Th
 
 **PreToolUse hook** feeds the daemon each tool's label so progress updates show what's happening right now.
 
-**SessionStart hook** discovers your installed skills and syncs them to BotFather's `/` command menu.
+**SessionStart hook** injects companion instructions into the session and syncs your installed skills to BotFather's `/` command menu.
 
 ## Voice Transcription
 
@@ -52,7 +52,7 @@ Without these, voice messages arrive as-is and Claude asks the user to type inst
 
 ## Configuration
 
-All settings live in `~/.claude/channels/telegram/command-config.json`:
+Optional. Create `~/.claude/channels/telegram/command-config.json` to customize (see `config/command-config.example.json`):
 
 | Key | Default | Purpose |
 | --- | --- | --- |
