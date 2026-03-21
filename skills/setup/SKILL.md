@@ -1,6 +1,6 @@
 ---
 name: setup
-description: This skill should be used when the user asks to "set up awesome-claude-telegram", "set up telegram companion", "migrate telegram files", or runs /awesome-claude-telegram:setup. Verifies prerequisites, creates default config, and cleans up legacy scattered files.
+description: This skill should be used when the user asks to "set up claude-telegram-companion", "set up telegram companion", "migrate telegram files", or runs /claude-telegram-companion:setup. Verifies prerequisites, creates default config, and cleans up legacy scattered files.
 allowed-tools:
   - Read
   - Write
@@ -9,7 +9,7 @@ allowed-tools:
   - Glob
 ---
 
-# Initialize awesome-claude-telegram
+# Initialize claude-telegram-companion
 
 Verify prerequisites, create default config, and migrate from the legacy scattered-file layout.
 

@@ -1,4 +1,4 @@
-# awesome-claude-telegram
+# claude-telegram-companion
 
 Companion plugin that upgrades Claude Code's Telegram channel with rich formatting, live progress, and voice transcription.
 
@@ -18,11 +18,11 @@ Companion plugin that upgrades Claude Code's Telegram channel with rich formatti
 ## Install
 
 ```
-/plugin marketplace add Mokson/awesome-claude-telegram
-/plugin install awesome-claude-telegram@awesome-claude-telegram
+/plugin marketplace add Mokson/claude-telegram-companion
+/plugin install claude-telegram-companion@claude-telegram-companion
 ```
 
-Restart Claude Code, then run `/awesome-claude-telegram:setup`.
+Restart Claude Code, then run `/claude-telegram-companion:setup`.
 
 **Requires:** Official `telegram` plugin enabled, [Bun](https://bun.sh).
 

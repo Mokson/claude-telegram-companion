@@ -1,4 +1,4 @@
-# awesome-claude-telegram
+# claude-telegram-companion
 
 Companion enhancements for the official Telegram channel plugin.
 

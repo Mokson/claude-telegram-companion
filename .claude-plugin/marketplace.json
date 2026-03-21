@@ -1,5 +1,5 @@
 {
-  "name": "awesome-claude-telegram",
+  "name": "claude-telegram-companion",
   "owner": {
     "name": "Mokson"
   },
@@ -8,7 +8,7 @@
   },
   "plugins": [
     {
-      "name": "awesome-claude-telegram",
+      "name": "claude-telegram-companion",
       "source": "./",
       "description": "Rich formatting, live progress, voice transcription, and error forwarding for Telegram."
     }
