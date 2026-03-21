@@ -1,6 +1,11 @@
 ---
 name: setup
-description: This skill should be used when the user asks to "set up claude-telegram-companion", "set up telegram companion", "migrate telegram files", or runs /claude-telegram-companion:setup. Verifies prerequisites, creates default config, and cleans up legacy scattered files.
+description: >-
+  This skill should be used when the user asks to "set up
+  claude-telegram-companion", "set up telegram companion", "configure telegram
+  companion", or runs /claude-telegram-companion:setup. Verifies prerequisites,
+  creates default config, cleans up legacy files, and checks transcription
+  tools.
 allowed-tools:
   - Read
   - Write
@@ -9,19 +14,19 @@ allowed-tools:
   - Glob
 ---
 
-# Initialize claude-telegram-companion
+# Set Up claude-telegram-companion
 
-Verify prerequisites, create default config, and migrate from the legacy scattered-file layout.
+Verify prerequisites, create config, and clean up legacy files from before the plugin existed.
 
-## Prerequisites Check
+## 1. Prerequisites
 
 1. Read `~/.claude/settings.json` and verify `telegram@claude-plugins-official` is in `enabledPlugins` with value `true`
 2. Verify `~/.claude/channels/telegram/.env` exists and contains `TELEGRAM_BOT_TOKEN=...`
 3. Verify `~/.claude/channels/telegram/access.json` exists
 
-Report any missing prerequisites. If the official telegram plugin is not enabled, stop and tell the user to enable it first.
+If the official telegram plugin is not enabled, stop and tell the user to enable it first.
 
-## Config Setup
+## 2. Config
 
 Check if `~/.claude/channels/telegram/command-config.json` exists.
 
@@ -30,29 +35,23 @@ If missing, copy from the plugin template:
 cp "${CLAUDE_PLUGIN_ROOT}/config/command-config.example.json" ~/.claude/channels/telegram/command-config.json
 ```
 
-If it already exists, leave it alone and report its current `progress` settings.
+If it already exists, report its current settings.
 
-## Legacy Migration
+## 3. Legacy Cleanup
 
-Check for and report these legacy files (from before the plugin existed):
+Check for leftover files from before this functionality was packaged as a plugin:
 
-| Legacy file | Replacement |
-|-------------|-------------|
-| `~/.claude/servers/telegram-progress/` | Plugin's `server/` directory |
-| `~/.claude/hooks/telegram-typing-keepalive.js` | Plugin's `scripts/telegram-typing-keepalive.js` |
-| `~/.claude/hooks/telegram-typing-daemon.js` | Plugin's `scripts/telegram-typing-daemon.js` |
-| `~/.claude/hooks/telegram-sync-commands.js` | Plugin's `scripts/telegram-sync-commands.js` |
-| `~/.claude/skills/telegram-formatting/` | Plugin's `skills/telegram-formatting/` |
+- `~/.claude/hooks/telegram-typing-keepalive.js`
+- `~/.claude/hooks/telegram-typing-daemon.js`
+- `~/.claude/hooks/telegram-sync-commands.js`
+- `~/.claude/skills/telegram-formatting/`
+Check `~/.claude/settings.json` for hook entries in `hooks.PreToolUse`, `hooks.PostToolUse`, and `hooks.SessionStart` referencing these files. List any that should be removed.
 
-Check `~/.claude/settings.json` for hook entries referencing these files in `hooks.PreToolUse`, `hooks.PostToolUse`, and `hooks.SessionStart`. List the entries that should be removed.
+Check `~/.claude/CLAUDE.md` for a `## Telegram` section now provided by the plugin's own CLAUDE.md.
 
-Check project `.mcp.json` files for a `telegram-progress` entry pointing to the old `~/.claude/servers/` location.
+Ask the user before deleting anything.
 
-Check `~/.claude/CLAUDE.md` for a `## Telegram` section that is now provided by the plugin's own CLAUDE.md.
-
-Ask the user before deleting anything. Offer to remove each category (files, hook entries, MCP entries, CLAUDE.md section).
-
-## Transcription Check
+## 4. Transcription
 
 Check if voice transcription tools are available:
 
@@ -60,12 +59,12 @@ Check if voice transcription tools are available:
 which ffmpeg && which whisper-cli && ls ~/.local/share/whisper.cpp/models/*.bin /opt/homebrew/share/whisper.cpp/models/*.bin 2>/dev/null | head -1
 ```
 
-Report status. If missing, note that voice transcription is optional and point to: `brew install whisper-cpp ffmpeg`.
+If missing, note that voice transcription is optional: `brew install whisper-cpp ffmpeg`.
 
-## Report
+## 5. Report
 
 Summarize:
 - Prerequisites: pass/fail
 - Config: created or already exists
 - Legacy files found and actions taken
-- Transcription tools: available or not installed (optional)
+- Transcription: available or not installed (optional)
