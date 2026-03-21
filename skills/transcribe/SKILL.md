@@ -20,37 +20,23 @@ A Telegram message arrives with `attachment_kind` set to `voice` or `audio` and 
 
 ## Workflow
 
-1. Download the attachment using the official plugin's `download_attachment` tool with the `file_id` from `attachment_file_id` in the channel meta. The tool returns a local file path.
+1. Download the attachment using the official plugin's `download_attachment` tool with the `file_id` from `attachment_file_id`. The tool returns a local file path.
 
-2. Read the transcription config:
-```bash
-cat ~/.claude/channels/telegram/command-config.json | grep -A5 '"transcription"'
-```
-
-3. Convert and transcribe using the binary and model from config:
+2. Find whisper model and transcribe in a single Bash call:
 ```bash
 AUDIO_PATH="<downloaded file path>"
 WAV_PATH="${AUDIO_PATH%.*}.wav"
+MODEL=$(ls ~/.local/share/whisper.cpp/models/ggml-base*.bin /opt/homebrew/share/whisper.cpp/models/ggml-base*.bin 2>/dev/null | head -1)
+if [ -z "$MODEL" ]; then echo "ERROR: no whisper model found"; exit 1; fi
 ffmpeg -i "$AUDIO_PATH" -ar 16000 -ac 1 -y "$WAV_PATH" 2>/dev/null
-whisper-cli -m "<model path from config>" -l "<language from config>" --no-timestamps -f "$WAV_PATH" 2>/dev/null
+whisper-cli -m "$MODEL" --no-timestamps -f "$WAV_PATH" 2>/dev/null
 rm -f "$WAV_PATH"
 ```
 
-4. Use the transcribed text as the user's message and respond accordingly.
+3. Use the transcribed text as the user's message and respond accordingly.
 
 ## If Transcription Fails
 
-If `whisper-cli` or `ffmpeg` is not installed, or the config is missing, respond to the Telegram user explaining that voice transcription is not configured and ask them to type their message instead.
+If `whisper-cli`, `ffmpeg`, or a model file is not found, tell the Telegram user that voice transcription is not set up and ask them to type their message instead.
 
-## Config Reference
-
-Transcription settings in `~/.claude/channels/telegram/command-config.json`:
-```json
-{
-  "transcription": {
-    "binary": "whisper-cli",
-    "model": "/path/to/ggml-base.en.bin",
-    "language": "en"
-  }
-}
-```
+Install with: `brew install whisper-cpp ffmpeg` and download a model to `~/.local/share/whisper.cpp/models/`.

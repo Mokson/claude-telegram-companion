@@ -42,19 +42,16 @@ The official plugin handles polling and message delivery. This plugin enhances e
 
 ## Voice Transcription
 
-Requires a [forked Telegram plugin](https://github.com/Mokson/claude-plugins-official) with voice/audio handlers. Voice messages are transcribed server-side via whisper.cpp before reaching Claude.
+Voice and audio messages are transcribed automatically via a built-in skill using `whisper-cli` and `ffmpeg`. No config needed. Install the tools and a model:
 
-Add to `~/.claude/channels/telegram/command-config.json`:
-
-```json
-"transcription": {
-  "binary": "whisper-cli",
-  "model": "/path/to/ggml-base.en.bin",
-  "language": "en"
-}
+```bash
+brew install whisper-cpp ffmpeg
+mkdir -p ~/.local/share/whisper.cpp/models
+curl -L -o ~/.local/share/whisper.cpp/models/ggml-base.en.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
 ```
 
-Needs `ffmpeg` and `whisper-cli` in PATH. Without them, voice messages arrive as-is with the audio file path.
+Without these, voice messages arrive as-is and Claude asks the user to type instead.
 
 ## Configuration
 
@@ -67,7 +64,6 @@ All settings live in `~/.claude/channels/telegram/command-config.json`:
 | `commands.exclude.skills` | `[]` | Hide individual skills |
 | `commands.aliases` | `{}` | Map skills to custom `/command` names |
 | `commands.extra` | `[]` | Add static commands not tied to any skill |
-| `transcription.*` | | See voice transcription above |
 
 ## License
 

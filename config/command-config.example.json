@@ -11,11 +11,5 @@
   },
   "progress": {
     "statusUpdates": true
-  },
-  "transcription": {
-    "enabled": true,
-    "binary": "whisper-cli",
-    "model": "/path/to/ggml-base.en.bin",
-    "language": "en"
   }
 }

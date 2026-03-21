@@ -52,23 +52,15 @@ Check `~/.claude/CLAUDE.md` for a `## Telegram` section that is now provided by 
 
 Ask the user before deleting anything. Offer to remove each category (files, hook entries, MCP entries, CLAUDE.md section).
 
-## Transcription Setup
+## Transcription Check
 
-Check if voice transcription dependencies are available:
+Check if voice transcription tools are available:
 
-1. Check `ffmpeg` is in PATH: `which ffmpeg`
-2. Check `whisper-cli` is in PATH: `which whisper-cli`
-3. If whisper-cli found, auto-detect model files in common locations:
-   - `/usr/local/share/whisper.cpp/models/`
-   - `$(brew --prefix 2>/dev/null)/share/whisper.cpp/models/`
-   - `~/.local/share/whisper.cpp/models/`
+```bash
+which ffmpeg && which whisper-cli && ls ~/.local/share/whisper.cpp/models/*.bin /opt/homebrew/share/whisper.cpp/models/*.bin 2>/dev/null | head -1
+```
 
-If both tools are found and a model is detected:
-- Read the existing `command-config.json`
-- If no `transcription` section exists, offer to add it with the detected binary and model paths
-- If `transcription` section already exists, report its current settings
-
-If either tool is missing, report which is missing and note that voice transcription is optional. Voice messages will still be received but arrive as "(voice message)" without transcription.
+Report status. If missing, note that voice transcription is optional and point to: `brew install whisper-cpp ffmpeg`.
 
 ## Report
 
@@ -76,4 +68,4 @@ Summarize:
 - Prerequisites: pass/fail
 - Config: created or already exists
 - Legacy files found and actions taken
-- Transcription: available (binary + model) or not configured
+- Transcription tools: available or not installed (optional)
