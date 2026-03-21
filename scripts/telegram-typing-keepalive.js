@@ -2,8 +2,7 @@
 // Pre/PostToolUse hook: Telegram progress indicators.
 //
 // Reads config from ~/.claude/channels/telegram/command-config.json:
-//   progress.reaction:      bool (default: false) - react with emoji on receipt
-//   progress.statusUpdates: bool (default: true)  - show tool progress in Telegram
+//   progress.statusUpdates: bool (default: true) - show tool progress in Telegram
 //
 // PreToolUse mode (argv[2] === 'pre'):
 //   Writes current tool label to /tmp/telegram-current-tool.txt
@@ -57,19 +56,17 @@ const CONFIG_FILE = path.join(os.homedir(), '.claude', 'channels', 'telegram', '
 // Actions that should not appear in progress log
 const SKIP_ACTIONS = new Set(['react', 'edit_message', 'send', 'edit', 'reply']);
 
-// Lazy-loaded config and token (only read when Telegram context is active)
-let _config = null;
-function getConfig() {
-  if (_config) return _config;
-  _config = { reaction: false, statusUpdates: true };
+// Lazy-loaded config (only read when Telegram context is active)
+let _statusUpdates = null;
+function statusUpdatesEnabled() {
+  if (_statusUpdates !== null) return _statusUpdates;
+  _statusUpdates = true;
   try {
     const raw = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
-    if (raw.progress) {
-      if (typeof raw.progress.reaction === 'boolean') _config.reaction = raw.progress.reaction;
-      if (typeof raw.progress.statusUpdates === 'boolean') _config.statusUpdates = raw.progress.statusUpdates;
-    }
+    if (raw.progress && typeof raw.progress.statusUpdates === 'boolean')
+      _statusUpdates = raw.progress.statusUpdates;
   } catch {}
-  return _config;
+  return _statusUpdates;
 }
 
 const envFile = path.join(os.homedir(), '.claude', 'channels', 'telegram', '.env');
@@ -113,21 +110,7 @@ process.stdin.on('end', () => {
 // --- PreToolUse: write current tool to file for daemon ---
 
 function handlePreToolUse(toolName, toolInput, sessionId) {
-  // Block react when reactions are disabled; always establish context
-  if (isTelegramChannelTool(toolName) && getTelegramAction(toolName) === 'react') {
-    const chatId = toolInput.chat_id;
-    if (!chatId) process.exit(0);
-    if (!getConfig().reaction) {
-      killDaemon();
-      try { fs.unlinkSync(LOG_FILE); } catch {}
-      try { fs.unlinkSync(CURRENT_TOOL_FILE); } catch {}
-      writeActive({ chat_id: chatId, session_id: sessionId, timestamp: now() });
-      process.stdout.write(JSON.stringify({ decision: 'block', reason: 'Reactions are disabled' }));
-    }
-    process.exit(0);
-  }
-
-  if (!getConfig().statusUpdates) process.exit(0);
+  if (!statusUpdatesEnabled()) process.exit(0);
 
   const ctx = readActive();
   if (!ctx || !ctx.chat_id || isStale(ctx)) process.exit(0);
@@ -186,7 +169,7 @@ function handlePostToolUse(data, toolName, toolInput) {
   }
 
   // --- Non-Telegram tool ---
-  if (!getConfig().statusUpdates) process.exit(0);
+  if (!statusUpdatesEnabled()) process.exit(0);
 
   const ctx = readActive();
   if (!ctx || !ctx.chat_id || isStale(ctx)) process.exit(0);

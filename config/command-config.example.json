@@ -10,7 +10,6 @@
     ]
   },
   "progress": {
-    "reaction": false,
     "statusUpdates": true
   },
   "transcription": {

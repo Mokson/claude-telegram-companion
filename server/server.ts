@@ -140,7 +140,7 @@ const mcp = new Server(
       'Do NOT use them unless you are handling a message from the Telegram channel ' +
       '(indicated by <channel source="telegram"> tags in the conversation). ' +
       "For normal terminal interactions, ignore these tools entirely. " +
-      "Do NOT call the plugin react tool. Reactions are managed by hooks.",
+      "Do NOT call the plugin react tool directly. Reactions are managed by the official plugin's ackReaction setting.",
   }
 );
 

@@ -62,7 +62,6 @@ All settings live in `~/.claude/channels/telegram/command-config.json`:
 
 | Key | Default | Purpose |
 | --- | --- | --- |
-| `progress.reaction` | `false` | React with emoji on message receipt |
 | `progress.statusUpdates` | `true` | Live step-by-step progress during work |
 | `commands.exclude.plugins` | `[]` | Hide entire plugins from `/` menu |
 | `commands.exclude.skills` | `[]` | Hide individual skills |

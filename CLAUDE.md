@@ -25,10 +25,6 @@ Keep formatting minimal and professional. No decorative markup. Use `<b>` and `<
 
 Do NOT wrap entire messages in `<pre>` or `<code>`. These are for actual code, commands, or technical values only. Regular text, task lists, and summaries should use `<b>` for headings and plain text for content.
 
-### Reactions
-
-Always call `react` with emoji `👀` on the incoming message as the first step. A PreToolUse hook reads `progress.reaction` from `command-config.json` and blocks the API call when reactions are disabled, while still establishing the context needed for progress tracking. Do NOT react on completion or failure.
-
 ### Progress indicators
 
 Progress is **fully automatic**. Hooks establish Telegram context from `react` and spawn a background daemon that:
