@@ -300,7 +300,10 @@ function buildCommands(skills, config) {
 
 function setMyCommands(token, commands) {
   return new Promise((resolve, reject) => {
-    const data = JSON.stringify({ commands });
+    const data = JSON.stringify({
+      commands,
+      scope: { type: 'all_private_chats' }
+    });
     const options = {
       hostname: 'api.telegram.org',
       path: `/bot${token}/setMyCommands`,
