@@ -46,9 +46,6 @@ const CURRENT_TOOL_FILE = path.join(tmpDir, 'telegram-current-tool.txt');
 
 const CONFIG_FILE = path.join(os.homedir(), '.claude', 'channels', 'telegram', 'command-config.json');
 
-// Actions that should not appear in progress log
-const SKIP_ACTIONS = new Set(['react', 'edit_message', 'send', 'edit', 'reply']);
-
 // Lazy-loaded config (only read when Telegram context is active)
 let _statusUpdates = null;
 function statusUpdatesEnabled() {
@@ -103,11 +100,10 @@ process.stdin.on('end', () => {
 // --- PreToolUse: write current tool to file for daemon ---
 
 function handlePreToolUse(toolName, toolInput, sessionId) {
-  if (!statusUpdatesEnabled()) process.exit(0);
-
   const ctx = readActive();
   if (!ctx || !ctx.chat_id || isStale(ctx)) process.exit(0);
   if (ctx.session_id && ctx.session_id !== sessionId) process.exit(0);
+  if (!statusUpdatesEnabled()) process.exit(0);
   if (isTelegramTool(toolName)) process.exit(0);
 
   const label = formatToolLabel(toolName, toolInput);
@@ -168,7 +164,6 @@ function handlePostToolUse(data, toolName, toolInput) {
   if (!ctx || !ctx.chat_id || isStale(ctx)) process.exit(0);
   // Only the originating session contributes to progress
   if (ctx.session_id && ctx.session_id !== sessionId) process.exit(0);
-  if (isTelegramTool(toolName)) process.exit(0);
 
   // Error handling: no progress message sent yet + tool failed
   // Send error directly to Telegram (don't rely on Claude following additionalContext)

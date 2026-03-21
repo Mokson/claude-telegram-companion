@@ -128,8 +128,7 @@ function discoverSkills() {
       // Scan <dirPath>/<pluginName>/skills/*/SKILL.md
       const skillsBase = path.join(dirPath, pluginName, 'skills');
       for (const skillDir of subdirs(skillsBase)) {
-        const f = path.join(skillsBase, skillDir, 'SKILL.md');
-        if (fs.existsSync(f)) skillFiles.push(f);
+        skillFiles.push(path.join(skillsBase, skillDir, 'SKILL.md'));
       }
     }
 
@@ -140,8 +139,7 @@ function discoverSkills() {
       if (versionDir) {
         const skillsBase = path.join(versionDir, 'skills');
         for (const skillDir of subdirs(skillsBase)) {
-          const f = path.join(skillsBase, skillDir, 'SKILL.md');
-          if (fs.existsSync(f)) skillFiles.push(f);
+          skillFiles.push(path.join(skillsBase, skillDir, 'SKILL.md'));
         }
       }
     }
@@ -167,7 +165,6 @@ function discoverSkills() {
   // 2. Discover user skills from ~/.claude/skills/*/SKILL.md
   for (const skillDir of subdirs(SKILLS_DIR)) {
     const f = path.join(SKILLS_DIR, skillDir, 'SKILL.md');
-    if (!fs.existsSync(f)) continue;
     const fm = parseFrontmatter(f);
     if (!fm) continue;
     skills.push({
@@ -184,7 +181,6 @@ function discoverSkills() {
   const projectSkillsDir = path.join(process.cwd(), '.claude', 'skills');
   for (const skillDir of subdirs(projectSkillsDir)) {
     const f = path.join(projectSkillsDir, skillDir, 'SKILL.md');
-    if (!fs.existsSync(f)) continue;
     const fm = parseFrontmatter(f);
     if (!fm) continue;
     // Skip if already discovered as user skill
@@ -237,7 +233,6 @@ function discoverSkills() {
       const origin = deriveOrigin(pluginName);
       for (const skillDir of subdirs(skillsBase)) {
         const f = path.join(skillsBase, skillDir, 'SKILL.md');
-        if (!fs.existsSync(f)) continue;
         const fm = parseFrontmatter(f);
         if (!fm) continue;
         const id = `${pluginName}:${fm.name}`;
