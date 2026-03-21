@@ -205,7 +205,7 @@ function handlePostToolUse(data, toolName, toolInput) {
     const escaped = escapeHtml(label);
     telegramPostSync('sendMessage', {
       chat_id: ctx.chat_id,
-      text: `<blockquote>${escaped}</blockquote>`,
+      text: `<blockquote>\u2713 ${escaped}</blockquote>`,
       parse_mode: 'HTML',
     }, (msgId) => {
       if (msgId) {
@@ -366,7 +366,7 @@ function formatProgress(entries, currentTool) {
   const lines = [];
   if (truncated > 0) lines.push(`<i>... ${truncated} earlier steps</i>`);
   for (const entry of visible) {
-    lines.push(escapeHtml(entry.label || 'Working').slice(0, 50));
+    lines.push(`\u2713 ${escapeHtml(entry.label || 'Working').slice(0, 50)}`);
   }
   if (currentTool && !doneLabels.has(currentTool)) {
     lines.push(`\u25B8 ${escapeHtml(currentTool).slice(0, 50)}\u2026`);
@@ -419,7 +419,7 @@ function formatToolLabel(toolName, toolInput) {
     const name = path.basename(toolInput.file_path || '') || 'file';
     return `Edit(${name})`;
   }
-  if (toolName === 'Grep') return 'Grep';
+  if (toolName === 'Grep') return 'Searched for patterns';
   if (toolName.startsWith('mcp__')) {
     const parts = toolName.split('__');
     const service = parts[1] || '';

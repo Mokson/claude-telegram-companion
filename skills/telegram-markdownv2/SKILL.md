@@ -69,6 +69,7 @@ Key points in this example:
 - Exclamations: `Done\!` not `Done!`
 - Parentheses in text: `\(optional\)` not `(optional)`
 - Equals signs: `deficiency \= 40%` not `deficiency = 40%`
+- Tildes (approximately): `\~60` not `~60` (unescaped `~` triggers strikethrough)
 - URLs inside `[text](url)` do not need escaping
 - Code block backticks: use ```` ``` ```` NOT `\`\`\``
 - Content inside code blocks: no escaping needed
