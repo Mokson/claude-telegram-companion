@@ -21,9 +21,20 @@ Outside of code spans and code blocks, escape these characters with a preceding 
 _ * [ ] ( ) ~ ` > # + - = | { } . !
 ```
 
-Inside `` `inline code` `` and ` ```code blocks``` `, only `` ` `` and `\` need escaping.
+**Inside code blocks and inline code, do NOT escape special characters** (except `` ` `` and `\` themselves). The triple backticks that open and close code blocks are NOT escaped either.
 
-**This is the primary source of formatting errors.** A single unescaped `.` or `-` causes the entire message to fail silently.
+**This is the primary source of formatting errors.** A single unescaped `.` or `-` in regular text causes the entire message to fail. But over-escaping inside code blocks also causes failures.
+
+## Code Block Rules
+
+Code blocks use unescaped triple backticks. Content inside is literal:
+
+    ```python
+    def hello():
+        print("Hello!")
+    ```
+
+Do NOT write `\`\`\`` - that creates literal backtick characters, not a code block. Do NOT escape `(`, `)`, `-`, `.` or other characters inside the code block.
 
 ## Syntax Reference
 
@@ -35,34 +46,21 @@ Inside `` `inline code` `` and ` ```code blocks``` `, only `` ` `` and `\` need 
 | Strikethrough | `~strikethrough~` |
 | Spoiler | `\|\|spoiler\|\|` |
 | Inline code | `` `code` `` |
-| Code block | ` ```language\ncode\n``` ` |
+| Code block | unescaped ` ``` ` with content as-is |
 | Link | `[text](url)` |
 | Block quote | `>line` (each line starts with `>`) |
 
-## Formatting Guidelines
+## Example Message
 
-Structure replies with visual hierarchy:
+A correctly formatted message looks like this (shown as the raw string passed to `reply`):
 
-```
-*Section Title*
+    *Task Complete*\n\nUpdated `config\.json` with new settings\.\n\n```json\n{"key": "value"}\n```\n\n\- Status: *done*\n\- Files changed: `2`
 
-Regular text with `inline code` and *emphasis*\.
-
->Important callout or quoted content
-
-\`\`\`
-multi\-line code output
-\`\`\`
-```
-
-Use escaped dashes for lists:
-
-```
-*Changes:*
-\- Task renamed to `Buy groceries`
-\- Priority set to *p2*
-\- Moved to _Personal_ project
-```
+Key points in this example:
+- `\.` escapes the dot in `config\.json` (outside code) but NOT inside the code block
+- `\-` escapes dashes for list items (outside code)
+- The ````json` and closing ```` ``` ```` are NOT escaped
+- `{"key": "value"}` inside the code block has no escaping
 
 ## Common Escaping Mistakes
 
@@ -71,9 +69,12 @@ Use escaped dashes for lists:
 - Exclamations: `Done\!` not `Done!`
 - Parentheses in text: `\(optional\)` not `(optional)`
 - URLs inside `[text](url)` do not need escaping
+- Code block backticks: use ```` ``` ```` NOT `\`\`\``
+- Content inside code blocks: no escaping needed
 
 ## What to Avoid
 
+- Escaping characters inside code blocks (most common cause of failures)
 - HTML tags (the MarkdownV2 parser ignores them)
 - Nesting formatting across line boundaries
 - Wrapping entire messages in code blocks for non-code content
