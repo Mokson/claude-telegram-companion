@@ -21,6 +21,11 @@ const os = require('os');
 const path = require('path');
 const https = require('https');
 const { spawn } = require('child_process');
+const {
+  LOG_FILE, PID_FILE, STOP_FILE, CURRENT_TOOL_FILE,
+  readToken, escapeHtml,
+  readProgressLog, readCurrentTool, formatProgress,
+} = require('./telegram-shared');
 
 const MODE = process.argv[2] || 'post';
 
@@ -39,10 +44,6 @@ const DAEMON_SCRIPT = path.join(__dirname, 'telegram-typing-daemon.js');
 
 const tmpDir = os.tmpdir();
 const ACTIVE_FILE = path.join(tmpDir, 'telegram-active.json');
-const LOG_FILE = path.join(tmpDir, 'telegram-progress.jsonl');
-const PID_FILE = path.join(tmpDir, 'telegram-typing-pid');
-const STOP_FILE = path.join(tmpDir, 'telegram-typing-stop');
-const CURRENT_TOOL_FILE = path.join(tmpDir, 'telegram-current-tool.txt');
 
 const CONFIG_FILE = path.join(os.homedir(), '.claude', 'channels', 'telegram', 'command-config.json');
 
@@ -59,17 +60,10 @@ function statusUpdatesEnabled() {
   return _statusUpdates;
 }
 
-const envFile = path.join(os.homedir(), '.claude', 'channels', 'telegram', '.env');
 let _token = null;
 function getToken() {
   if (_token !== null) return _token;
-  _token = '';
-  try {
-    for (const line of fs.readFileSync(envFile, 'utf8').split('\n')) {
-      const m = line.match(/^TELEGRAM_BOT_TOKEN=(.+)$/);
-      if (m) { _token = m[1]; break; }
-    }
-  } catch {}
+  _token = readToken();
   return _token;
 }
 
@@ -98,14 +92,15 @@ process.stdin.on('end', () => {
 // --- PreToolUse: write current tool to file for daemon ---
 
 function handlePreToolUse(toolName, toolInput, sessionId) {
+  // Cheap checks first to avoid file I/O for hidden/telegram tools
+  if (isTelegramTool(toolName)) process.exit(0);
+  const label = formatToolLabel(toolName, toolInput);
+  if (!label) process.exit(0);
+
   const ctx = readActive();
   if (!ctx || !ctx.chat_id || isStale(ctx)) process.exit(0);
   if (ctx.session_id && ctx.session_id !== sessionId) process.exit(0);
   if (!statusUpdatesEnabled()) process.exit(0);
-  if (isTelegramTool(toolName)) process.exit(0);
-
-  const label = formatToolLabel(toolName, toolInput);
-  if (!label) process.exit(0);
 
   try { fs.writeFileSync(CURRENT_TOOL_FILE, label); } catch {}
   process.exit(0);
@@ -156,6 +151,8 @@ function handlePostToolUse(data, toolName, toolInput) {
   }
 
   // --- Non-Telegram tool ---
+  // Skip hidden tools before any file I/O
+  if (HIDDEN_TOOLS.has(toolName)) process.exit(0);
   if (!statusUpdatesEnabled()) process.exit(0);
 
   const ctx = readActive();
@@ -173,8 +170,7 @@ function handlePostToolUse(data, toolName, toolInput) {
       chat_id: ctx.chat_id,
       text: `<b>Failed:</b> ${escapeHtml(errorText)}`,
       parse_mode: 'HTML',
-    }, () => {});
-    cleanup();
+    }, () => { cleanup(); });
     return;
   }
 
@@ -221,10 +217,9 @@ function handlePostToolUse(data, toolName, toolInput) {
   ctx.timestamp = now();
   writeActive(ctx);
 
-  // Edit progress message immediately so completed steps appear without daemon lag
-  editProgress(ctx);
-
+  // If daemon died, edit progress immediately and respawn
   if (ctx.progress_msg_id && !isDaemonAlive()) {
+    editProgress(ctx);
     try { fs.unlinkSync(STOP_FILE); } catch {}
     spawnDaemon(ctx.chat_id, ctx.progress_msg_id);
   }
@@ -247,10 +242,6 @@ function cleanup() {
   try { fs.unlinkSync(ACTIVE_FILE); } catch {}
   try { fs.unlinkSync(LOG_FILE); } catch {}
   try { fs.unlinkSync(CURRENT_TOOL_FILE); } catch {}
-}
-
-function escapeHtml(text) {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function looksLikeError(output) {
@@ -335,44 +326,7 @@ function spawnDaemon(chatId, messageId) {
   } catch {}
 }
 
-// --- Progress formatting (shared logic with daemon) ---
-
-const MAX_VISIBLE_STEPS = 15;
-
-function readProgressLog() {
-  try {
-    const raw = fs.readFileSync(LOG_FILE, 'utf8').trim();
-    if (!raw) return [];
-    return raw.split('\n').map(line => {
-      try { return JSON.parse(line); } catch { return null; }
-    }).filter(Boolean);
-  } catch { return []; }
-}
-
-function readCurrentTool() {
-  try {
-    const label = fs.readFileSync(CURRENT_TOOL_FILE, 'utf8').trim();
-    return label || null;
-  } catch { return null; }
-}
-
-function formatProgress(entries, currentTool) {
-  if (entries.length === 0 && !currentTool) return null;
-  const visible = entries.length > MAX_VISIBLE_STEPS
-    ? entries.slice(-MAX_VISIBLE_STEPS) : entries;
-  const truncated = entries.length > MAX_VISIBLE_STEPS
-    ? entries.length - MAX_VISIBLE_STEPS : 0;
-  const doneLabels = new Set(entries.map(e => e.label));
-  const lines = [];
-  if (truncated > 0) lines.push(`<i>... ${truncated} earlier steps</i>`);
-  for (const entry of visible) {
-    lines.push(`\u2713 ${escapeHtml(entry.label || 'Working').slice(0, 50)}`);
-  }
-  if (currentTool && !doneLabels.has(currentTool)) {
-    lines.push(`\u25B8 ${escapeHtml(currentTool).slice(0, 50)}\u2026`);
-  }
-  return '<blockquote>' + lines.join('\n') + '</blockquote>';
-}
+// --- Progress editing ---
 
 function editProgress(ctx) {
   if (!ctx.progress_msg_id || !getToken()) return;

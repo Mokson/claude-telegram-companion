@@ -10,28 +10,16 @@
 
 const https = require('https');
 const fs = require('fs');
-const os = require('os');
-const path = require('path');
+const {
+  PID_FILE, STOP_FILE,
+  readToken, readProgressLog, readCurrentTool, formatProgress,
+} = require('./telegram-shared');
 
 const chatId = process.argv[2];
 const messageId = process.argv[3] || null;
 if (!chatId) process.exit(1);
 
-const tmpDir = os.tmpdir();
-const PID_FILE = path.join(tmpDir, 'telegram-typing-pid');
-const STOP_FILE = path.join(tmpDir, 'telegram-typing-stop');
-const LOG_FILE = path.join(tmpDir, 'telegram-progress.jsonl');
-const CURRENT_TOOL_FILE = path.join(tmpDir, 'telegram-current-tool.txt');
-
-// Read token
-const envFile = path.join(os.homedir(), '.claude', 'channels', 'telegram', '.env');
-let token = '';
-try {
-  for (const line of fs.readFileSync(envFile, 'utf8').split('\n')) {
-    const m = line.match(/^TELEGRAM_BOT_TOKEN=(.+)$/);
-    if (m) { token = m[1]; break; }
-  }
-} catch { process.exit(1); }
+const token = readToken();
 if (!token) process.exit(1);
 
 fs.writeFileSync(PID_FILE, String(process.pid));
@@ -39,10 +27,9 @@ fs.writeFileSync(PID_FILE, String(process.pid));
 const MAX_DURATION_MS = 5 * 60 * 1000;
 const TYPING_INTERVAL_MS = 4000;
 const PROGRESS_INTERVAL_MS = 3000;
-const MAX_VISIBLE_STEPS = 15;
 const startedAt = Date.now();
 
-let lastProgressHash = '';
+let lastProgressText = '';
 let lastEditAt = 0;
 
 function shouldStop() {
@@ -64,53 +51,6 @@ function sendTyping() {
 
 // --- Progress ---
 
-function readProgressLog() {
-  try {
-    const raw = fs.readFileSync(LOG_FILE, 'utf8').trim();
-    if (!raw) return [];
-    return raw.split('\n').map(line => {
-      try { return JSON.parse(line); } catch { return null; }
-    }).filter(Boolean);
-  } catch { return []; }
-}
-
-function readCurrentTool() {
-  try {
-    const label = fs.readFileSync(CURRENT_TOOL_FILE, 'utf8').trim();
-    return label || null;
-  } catch { return null; }
-}
-
-function escapeHtml(text) {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-function formatProgress(entries, currentTool) {
-  if (entries.length === 0 && !currentTool) return null;
-
-  const visible = entries.length > MAX_VISIBLE_STEPS
-    ? entries.slice(-MAX_VISIBLE_STEPS) : entries;
-  const truncated = entries.length > MAX_VISIBLE_STEPS
-    ? entries.length - MAX_VISIBLE_STEPS : 0;
-
-  // Collect done labels to avoid showing current tool if already completed
-  const doneLabels = new Set(entries.map(e => e.label));
-
-  let lines = [];
-  if (truncated > 0) lines.push(`<i>... ${truncated} earlier steps</i>`);
-  for (const entry of visible) {
-    const label = escapeHtml(entry.label || 'Working').slice(0, 50);
-    lines.push(`\u2713 ${label}`);
-  }
-  // Show current tool only if not already in done log
-  if (currentTool && !doneLabels.has(currentTool)) {
-    const label = escapeHtml(currentTool).slice(0, 50);
-    lines.push(`\u25B8 ${label}\u2026`);
-  }
-
-  return '<blockquote>' + lines.join('\n') + '</blockquote>';
-}
-
 function updateProgress() {
   if (shouldStop()) { cleanup(); process.exit(0); }
   if (!messageId) return;
@@ -120,18 +60,18 @@ function updateProgress() {
   if (entries.length === 0 && !currentTool) return;
 
   const text = formatProgress(entries, currentTool);
-  if (!text || text === lastProgressHash) return;
+  if (!text || text === lastProgressText) return;
 
   const elapsed = Date.now() - lastEditAt;
   if (elapsed < 2000) return;
 
-  lastProgressHash = text;
+  lastProgressText = text;
   lastEditAt = Date.now();
 
   telegramPost('editMessageText', {
     chat_id: chatId,
     message_id: Number(messageId),
-    text: text,
+    text,
     parse_mode: 'HTML',
   });
 }
