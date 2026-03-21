@@ -33,7 +33,7 @@ function readEnv(filePath) {
   }
 }
 
-// Parse YAML frontmatter from SKILL.md (simple parser, no deps)
+// Parse YAML frontmatter from SKILL.md or command .md (simple parser, no deps)
 function parseFrontmatter(filePath) {
   try {
     const content = fs.readFileSync(filePath, 'utf8');
@@ -76,6 +76,17 @@ function subdirs(dir) {
   }
 }
 
+// List .md files in a directory (files only, not subdirs)
+function mdFiles(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true })
+      .filter(d => d.isFile() && d.name.endsWith('.md'))
+      .map(d => path.join(dir, d.name));
+  } catch {
+    return [];
+  }
+}
+
 // Get the latest version directory (sorts by name, picks last)
 function latestVersionDir(pluginCacheDir) {
   const versions = subdirs(pluginCacheDir);
@@ -99,7 +110,7 @@ function sanitizeCommand(name) {
     .slice(0, 32);
 }
 
-// --- Skill Discovery ---
+// --- Skill & Command Discovery ---
 
 function discoverSkills() {
   const settings = readJSON(path.join(CLAUDE_DIR, 'settings.json'));
@@ -108,8 +119,15 @@ function discoverSkills() {
   const enabledPlugins = settings.enabledPlugins || {};
   const extraMarketplaces = settings.extraKnownMarketplaces || {};
   const skills = []; // { id, name, description, origin, source, pluginKey }
+  const seenIds = new Set();
 
-  // 1. Discover plugin skills
+  function addSkill(skill) {
+    if (seenIds.has(skill.id)) return;
+    seenIds.add(skill.id);
+    skills.push(skill);
+  }
+
+  // 1. Discover plugin skills and commands
   for (const [key, enabled] of Object.entries(enabledPlugins)) {
     if (!enabled) continue;
     const atIdx = key.lastIndexOf('@');
@@ -122,42 +140,40 @@ function discoverSkills() {
     const isDirectory = mktConfig?.source?.source === 'directory';
     const dirPath = mktConfig?.source?.path;
 
-    let skillFiles = [];
-
+    // Resolve plugin root (directory source preferred, cache as fallback)
+    let pluginRoot = null;
     if (isDirectory && dirPath) {
-      // Scan <dirPath>/<pluginName>/skills/*/SKILL.md
-      const skillsBase = path.join(dirPath, pluginName, 'skills');
-      for (const skillDir of subdirs(skillsBase)) {
-        skillFiles.push(path.join(skillsBase, skillDir, 'SKILL.md'));
-      }
+      const candidate = path.join(dirPath, pluginName);
+      try { if (fs.statSync(candidate).isDirectory()) pluginRoot = candidate; } catch {}
     }
-
-    // Also scan cache (fallback for directory sources, primary for others)
-    if (skillFiles.length === 0) {
-      const pluginCacheDir = path.join(CACHE_DIR, marketplace, pluginName);
-      const versionDir = latestVersionDir(pluginCacheDir);
-      if (versionDir) {
-        const skillsBase = path.join(versionDir, 'skills');
-        for (const skillDir of subdirs(skillsBase)) {
-          skillFiles.push(path.join(skillsBase, skillDir, 'SKILL.md'));
-        }
-      }
+    if (!pluginRoot) {
+      pluginRoot = latestVersionDir(path.join(CACHE_DIR, marketplace, pluginName));
     }
+    if (!pluginRoot) continue;
 
     const origin = deriveOrigin(pluginName);
     const usePrefix = !isDirectory;
 
-    for (const f of skillFiles) {
-      const fm = parseFrontmatter(f);
+    // Scan skills
+    for (const skillDir of subdirs(path.join(pluginRoot, 'skills'))) {
+      const fm = parseFrontmatter(path.join(pluginRoot, 'skills', skillDir, 'SKILL.md'));
       if (!fm) continue;
       const id = usePrefix ? `${pluginName}:${fm.name}` : fm.name;
-      skills.push({
-        id,
-        name: fm.name,
-        description: fm.description,
-        origin,
-        source: 'plugin',
-        pluginKey: key
+      addSkill({
+        id, name: fm.name, description: fm.description,
+        origin, source: 'plugin', pluginKey: key,
+      });
+    }
+
+    // Scan commands
+    for (const f of mdFiles(path.join(pluginRoot, 'commands'))) {
+      const fm = parseFrontmatter(f);
+      const cmdName = (fm && fm.name) || path.basename(f, '.md');
+      const desc = (fm && fm.description) || '';
+      const id = usePrefix ? `${pluginName}:${cmdName}` : cmdName;
+      addSkill({
+        id, name: cmdName, description: desc,
+        origin, source: 'plugin', pluginKey: key,
       });
     }
   }
@@ -167,14 +183,34 @@ function discoverSkills() {
     const f = path.join(SKILLS_DIR, skillDir, 'SKILL.md');
     const fm = parseFrontmatter(f);
     if (!fm) continue;
-    skills.push({
-      id: fm.name,
-      name: fm.name,
-      description: fm.description,
-      origin: 'user',
-      source: 'user',
-      pluginKey: null
+    addSkill({
+      id: fm.name, name: fm.name, description: fm.description,
+      origin: 'user', source: 'user', pluginKey: null,
     });
+  }
+
+  // 2b. Discover user commands from ~/.claude/commands/
+  const userCmdsDir = path.join(CLAUDE_DIR, 'commands');
+  for (const f of mdFiles(userCmdsDir)) {
+    const fm = parseFrontmatter(f);
+    const cmdName = (fm && fm.name) || path.basename(f, '.md');
+    const desc = (fm && fm.description) || '';
+    addSkill({
+      id: cmdName, name: cmdName, description: desc,
+      origin: 'user', source: 'user', pluginKey: null,
+    });
+  }
+  for (const ns of subdirs(userCmdsDir)) {
+    for (const f of mdFiles(path.join(userCmdsDir, ns))) {
+      const fm = parseFrontmatter(f);
+      const cmdName = (fm && fm.name) || path.basename(f, '.md');
+      const id = `${ns}:${cmdName}`;
+      const desc = (fm && fm.description) || '';
+      addSkill({
+        id, name: cmdName, description: desc,
+        origin: ns, source: 'user', pluginKey: null,
+      });
+    }
   }
 
   // 3. Discover project-level skills from <cwd>/.claude/skills/*/SKILL.md
@@ -183,37 +219,34 @@ function discoverSkills() {
     const f = path.join(projectSkillsDir, skillDir, 'SKILL.md');
     const fm = parseFrontmatter(f);
     if (!fm) continue;
-    // Skip if already discovered as user skill
-    if (skills.some(s => s.id === fm.name)) continue;
-    skills.push({
-      id: fm.name,
-      name: fm.name,
-      description: fm.description,
-      origin: 'project',
-      source: 'project',
-      pluginKey: null
+    addSkill({
+      id: fm.name, name: fm.name, description: fm.description,
+      origin: 'project', source: 'project', pluginKey: null,
     });
   }
 
-  // 4. Discover project-level commands from <cwd>/.claude/commands/<namespace>/<cmd>.md
+  // 4. Discover project-level commands from <cwd>/.claude/commands/
   const projectCmdsDir = path.join(process.cwd(), '.claude', 'commands');
+  for (const f of mdFiles(projectCmdsDir)) {
+    const fm = parseFrontmatter(f);
+    const cmdName = (fm && fm.name) || path.basename(f, '.md');
+    const desc = (fm && fm.description) || '';
+    addSkill({
+      id: cmdName, name: cmdName, description: desc,
+      origin: 'project', source: 'command', pluginKey: null,
+    });
+  }
   for (const ns of subdirs(projectCmdsDir)) {
-    const nsDir = path.join(projectCmdsDir, ns);
-    try {
-      const files = fs.readdirSync(nsDir).filter(f => f.endsWith('.md'));
-      for (const file of files) {
-        const cmdName = path.basename(file, '.md');
-        const id = `${ns}:${cmdName}`;
-        skills.push({
-          id,
-          name: cmdName,
-          description: '',
-          origin: ns,
-          source: 'command',
-          pluginKey: null
-        });
-      }
-    } catch {}
+    for (const f of mdFiles(path.join(projectCmdsDir, ns))) {
+      const fm = parseFrontmatter(f);
+      const cmdName = (fm && fm.name) || path.basename(f, '.md');
+      const id = `${ns}:${cmdName}`;
+      const desc = (fm && fm.description) || '';
+      addSkill({
+        id, name: cmdName, description: desc,
+        origin: ns, source: 'command', pluginKey: null,
+      });
+    }
   }
 
   return skills;
@@ -221,10 +254,9 @@ function discoverSkills() {
 
 // --- Filter, Map, and Build Command List ---
 
-// Project-scoped sources that auto-include by default.
-const PROJECT_SOURCES = new Set(['project', 'command']);
+// Priority: lower number wins bare name on collision
+const SCOPE_PRIORITY = { project: 0, command: 0, user: 1, plugin: 2 };
 
-// Look up a skill in a map by prefixed id or bare name.
 function configLookup(map, skill) {
   if (skill.id in map) return skill.id;
   if (skill.name !== skill.id && skill.name in map) return skill.name;
@@ -236,61 +268,83 @@ function configHas(set, skill) {
 }
 
 function buildCommands(skills, config) {
-  // Support both v2 (commands.*) and v1 (flat) schema
   const cmds = config.commands || {};
   const exclude = cmds.exclude || {};
   const excludePlugins = new Set(exclude.plugins || []);
-  const excludeProject = new Set(exclude.skills || []);
-  const include = cmds.aliases || {};
+  const excludeSkills = new Set(exclude.skills || []);
+  const aliases = cmds.aliases || {};
   const extra = cmds.extra || [];
+
+  // Build candidates with priority
+  const candidates = [];
+
+  for (const skill of skills) {
+    if (skill.pluginKey && excludePlugins.has(skill.pluginKey)) continue;
+
+    // Alias takes priority over skill-level exclusion
+    const aliasKey = configLookup(aliases, skill);
+    if (aliasKey !== null) {
+      const entry = aliases[aliasKey];
+      candidates.push({
+        command: entry.command,
+        fallback: null,
+        description: (entry.description || '').slice(0, 256),
+        priority: -1,
+      });
+      continue;
+    }
+
+    if (configHas(excludeSkills, skill)) continue;
+
+    // All items use bare name; prefix only on collision
+    const command = sanitizeCommand(skill.name);
+    const fallback = skill.id !== skill.name
+      ? sanitizeCommand(skill.id)                          // plugin: use prefixed id
+      : sanitizeCommand(skill.origin + '_' + skill.name);  // user/project: use origin_name
+    const desc = skill.description
+      ? `[${skill.origin}] ${skill.description}`
+      : `[${skill.origin}] ${skill.name}`;
+
+    candidates.push({
+      command,
+      fallback: (fallback && fallback !== command) ? fallback : null,
+      description: desc.slice(0, 256),
+      priority: SCOPE_PRIORITY[skill.source] ?? 2,
+    });
+  }
+
+  // Sort by priority so higher-priority items claim names first
+  candidates.sort((a, b) => a.priority - b.priority);
+
   const seen = new Set();
   const commands = [];
 
-  for (const skill of skills) {
-    // 1. Plugin excluded? -> skip
-    if (skill.pluginKey && excludePlugins.has(skill.pluginKey)) continue;
-
-    // 2. Has include entry? -> use its command/description (global whitelist or project override)
-    const includeKey = configLookup(include, skill);
-    if (includeKey !== null) {
-      const entry = include[includeKey];
-      const cmd = entry.command;
-      if (seen.has(cmd)) continue;
-      seen.add(cmd);
-      commands.push({
-        command: cmd,
-        description: (entry.description || '').slice(0, 256)
-      });
-      continue;
-    }
-
-    // 3. Project-scoped and not excluded? -> auto-derive
-    if (PROJECT_SOURCES.has(skill.source)) {
-      if (configHas(excludeProject, skill)) continue;
-      const cmd = sanitizeCommand(skill.id);
-      if (seen.has(cmd)) continue;
-      seen.add(cmd);
-      const desc = skill.description
-        ? `[${skill.origin}] ${skill.description}`
-        : `[${skill.origin}] ${skill.name}`;
-      commands.push({
-        command: cmd,
-        description: desc.slice(0, 256)
-      });
-      continue;
-    }
-
-    // 4. Global skill without include entry -> skip
+  for (const c of candidates) {
+    const name = !seen.has(c.command) ? c.command
+      : (c.fallback && !seen.has(c.fallback)) ? c.fallback
+      : null;
+    if (!name) continue;
+    seen.add(name);
+    commands.push({ command: name, description: c.description });
   }
 
-  // Append extra commands
   for (const entry of extra) {
     if (seen.has(entry.command)) continue;
     seen.add(entry.command);
     commands.push({
       command: entry.command,
-      description: (entry.description || '').slice(0, 256)
+      description: (entry.description || '').slice(0, 256),
     });
+  }
+
+  // Sort alphabetically for a scannable menu
+  commands.sort((a, b) => a.command.localeCompare(b.command));
+
+  if (commands.length > 100) {
+    process.stderr.write(
+      `telegram-sync-commands: ${commands.length} commands exceed Telegram's 100-command limit, truncating\n`
+    );
+    commands.length = 100;
   }
 
   return commands;
