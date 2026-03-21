@@ -221,6 +221,9 @@ function handlePostToolUse(data, toolName, toolInput) {
   ctx.timestamp = now();
   writeActive(ctx);
 
+  // Edit progress message immediately so completed steps appear without daemon lag
+  editProgress(ctx);
+
   if (ctx.progress_msg_id && !isDaemonAlive()) {
     try { fs.unlinkSync(STOP_FILE); } catch {}
     spawnDaemon(ctx.chat_id, ctx.progress_msg_id);
@@ -332,13 +335,77 @@ function spawnDaemon(chatId, messageId) {
   } catch {}
 }
 
+// --- Progress formatting (shared logic with daemon) ---
+
+const MAX_VISIBLE_STEPS = 15;
+
+function readProgressLog() {
+  try {
+    const raw = fs.readFileSync(LOG_FILE, 'utf8').trim();
+    if (!raw) return [];
+    return raw.split('\n').map(line => {
+      try { return JSON.parse(line); } catch { return null; }
+    }).filter(Boolean);
+  } catch { return []; }
+}
+
+function readCurrentTool() {
+  try {
+    const label = fs.readFileSync(CURRENT_TOOL_FILE, 'utf8').trim();
+    return label || null;
+  } catch { return null; }
+}
+
+function formatProgress(entries, currentTool) {
+  if (entries.length === 0 && !currentTool) return null;
+  const visible = entries.length > MAX_VISIBLE_STEPS
+    ? entries.slice(-MAX_VISIBLE_STEPS) : entries;
+  const truncated = entries.length > MAX_VISIBLE_STEPS
+    ? entries.length - MAX_VISIBLE_STEPS : 0;
+  const doneLabels = new Set(entries.map(e => e.label));
+  const lines = [];
+  if (truncated > 0) lines.push(`<i>... ${truncated} earlier steps</i>`);
+  for (const entry of visible) {
+    lines.push(`\u2705 ${escapeHtml(entry.label || 'Working').slice(0, 50)}`);
+  }
+  if (currentTool && !doneLabels.has(currentTool)) {
+    lines.push(`\u23F3 ${escapeHtml(currentTool).slice(0, 50)}`);
+  }
+  return '<blockquote>' + lines.join('\n') + '</blockquote>';
+}
+
+function editProgress(ctx) {
+  if (!ctx.progress_msg_id || !getToken()) return;
+  const entries = readProgressLog();
+  const currentTool = readCurrentTool();
+  const text = formatProgress(entries, currentTool);
+  if (!text) return;
+  telegramPostFireForget('editMessageText', {
+    chat_id: ctx.chat_id,
+    message_id: Number(ctx.progress_msg_id),
+    text,
+    parse_mode: 'HTML',
+  });
+}
+
 // --- Tool labels ---
 
+// Internal tools that shouldn't appear in progress
+const HIDDEN_TOOLS = new Set([
+  'Read', 'Glob', 'ToolSearch',
+  'TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList', 'TaskOutput', 'TaskStop',
+]);
+
 function formatToolLabel(toolName, toolInput) {
-  if (toolName === 'Read' || toolName === 'Glob') return null;
+  if (HIDDEN_TOOLS.has(toolName)) return null;
 
   if (toolName === 'Agent') return toolInput.description || 'Processing';
-  if (toolName === 'Skill') return toolInput.skill || null;
+  if (toolName === 'Skill') {
+    const skill = toolInput.skill || '';
+    // Strip plugin prefix: "claude-telegram-companion:transcribe" → "transcribe"
+    const name = skill.includes(':') ? skill.split(':').pop() : skill;
+    return name || null;
+  }
   if (toolName === 'Bash') {
     if (toolInput.description) return toolInput.description;
     const cmd = toolInput.command || '';
@@ -356,8 +423,9 @@ function formatToolLabel(toolName, toolInput) {
   if (toolName.startsWith('mcp__')) {
     const parts = toolName.split('__');
     const service = parts[1] || '';
+    const cap = service.charAt(0).toUpperCase() + service.slice(1);
     const op = (parts.slice(2).join('-') || '').replace(/-/g, ' ');
-    return `${service}: ${op}`.slice(0, 50);
+    return `${cap}: ${op}`.slice(0, 50);
   }
   return toolName;
 }

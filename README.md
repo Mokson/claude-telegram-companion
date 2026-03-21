@@ -1,45 +1,42 @@
 # claude-telegram-companion
 
-Companion plugin that adds live progress tracking, voice transcription, and command menu sync to Claude Code's Telegram channel.
+Drop-in companion for the official Telegram plugin. Adds live progress tracking, persistent typing, error forwarding, command menus, MarkdownV2 formatting, and voice transcription.
 
 <img src="assets/typing.png" width="220" alt="Persistent typing indicator" />
-
 <img src="assets/progress.png" width="320" alt="Live progress tracking" />
 
 | Without | With |
 | --- | --- |
-| Typing vanishes after 5s | Typing persists for up to 5 minutes |
-| Silent multi-step tasks | Live step-by-step progress in chat |
-| Errors lost in terminal | Errors auto-forwarded to Telegram |
-| No command menu | Skills synced to `/` menu |
-| Voice messages ignored | Voice transcribed via whisper.cpp |
+| Typing vanishes after 5 seconds | Typing persists for up to 5 minutes |
+| No visibility into multi-step work | Live step-by-step progress in chat |
+| Tool errors lost in terminal | Errors forwarded to Telegram |
+| No `/` command menu | Skills auto-synced to BotFather |
+| Voice messages ignored | Voice transcribed locally via whisper.cpp |
 
-## Install
+## Quick start
+
+Requires the official `telegram` plugin to be enabled.
 
 ```
 /plugin marketplace add Mokson/claude-telegram-companion
 /plugin install claude-telegram-companion@claude-telegram-companion
 ```
 
-Restart Claude Code. No setup steps needed.
+Restart Claude Code. Everything works out of the box.
 
-**Requires:** Official `telegram` plugin enabled.
+## What it does
 
-## How It Works
+The plugin runs entirely through hooks. No MCP server, no background processes at rest.
 
-This plugin sits alongside the official Telegram plugin. Same bot token, same access control, no conflicts.
+**On session start**, it injects behavioral instructions (call `react` first, use MarkdownV2, handle voice messages) and syncs your installed skills to the Telegram `/` command menu using per-chat scope so the official plugin can't overwrite them.
 
-The official plugin handles polling, message delivery, and formatted replies. This plugin adds UX enhancements through three hooks:
+**On every tool call**, it tracks progress. When Claude reacts to an incoming message, the hook establishes context. On the first real tool call, it sends a progress message and spawns a typing daemon. Each subsequent tool completion updates the message with a live checklist. When Claude replies, the progress message is deleted.
 
-**PostToolUse hook** drives the core experience. It watches for `react` calls to establish Telegram context, auto-sends a progress message on the first tool call, spawns a background typing daemon, and cleans up when Claude replies. If a tool fails before any reply is sent, the error goes straight to Telegram.
+**On tool failure**, if no reply has been sent yet, the error is forwarded directly to Telegram so the user isn't left waiting in silence.
 
-**PreToolUse hook** feeds the daemon each tool's label so progress updates show what's happening right now.
+## Voice transcription
 
-**SessionStart hook** injects companion instructions into the session and syncs your installed skills to BotFather's `/` command menu.
-
-## Voice Transcription
-
-Voice and audio messages are transcribed automatically via a built-in skill using `whisper-cli` and `ffmpeg`. No config needed. Install the tools and a model:
+Transcribes voice and audio messages locally using whisper.cpp. Optional.
 
 ```bash
 brew install whisper-cpp ffmpeg
@@ -48,19 +45,19 @@ curl -L -o ~/.local/share/whisper.cpp/models/ggml-base.en.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
 ```
 
-Without these, voice messages arrive as-is and Claude asks the user to type instead.
+Without these tools installed, Claude asks the sender to type instead.
 
 ## Configuration
 
-Optional. Create `~/.claude/channels/telegram/command-config.json` to customize (see `config/command-config.example.json`):
+Everything works without configuration. Optionally create `~/.claude/channels/telegram/command-config.json` to customize the command menu (see `config/command-config.example.json` for the schema):
 
 | Key | Default | Purpose |
 | --- | --- | --- |
-| `progress.statusUpdates` | `true` | Live step-by-step progress during work |
-| `commands.exclude.plugins` | `[]` | Hide entire plugins from `/` menu |
+| `progress.statusUpdates` | `true` | Show live progress during work |
+| `commands.exclude.plugins` | `[]` | Hide entire plugins from the menu |
 | `commands.exclude.skills` | `[]` | Hide individual skills |
 | `commands.aliases` | `{}` | Map skills to custom `/command` names |
-| `commands.extra` | `[]` | Add static commands not tied to any skill |
+| `commands.extra` | `[]` | Add static commands not tied to a skill |
 
 ## License
 
