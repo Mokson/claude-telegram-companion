@@ -374,6 +374,15 @@ function formatToolLabel(toolName, toolInput) {
     return `Edit(${name})`;
   }
   if (toolName === 'Grep') return 'Searched for patterns';
+  if (toolName === 'WebSearch') {
+    const query = toolInput.query || '';
+    return query ? `Search(${query.slice(0, 50)})` : 'Web search';
+  }
+  if (toolName === 'WebFetch') {
+    const url = toolInput.url || '';
+    const short = url.replace(/^https?:\/\//, '').slice(0, 50);
+    return short ? `Fetch(${short})` : 'Web fetch';
+  }
   if (toolName.startsWith('mcp__')) {
     const parts = toolName.split('__');
     const service = parts[1] || '';
