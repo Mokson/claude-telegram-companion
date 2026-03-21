@@ -18,9 +18,13 @@ MarkdownV2 requires escaping these characters outside of code blocks: `_ * [ ] (
 
 Use `edit_message` with `format: "markdownv2"` for interim progress updates. Edits don't trigger push notifications, so send a new `reply` when a long task completes.
 
+### Reactions
+
+Always call `react` with emoji `👀` on the incoming message as the **first action** before doing any work. This establishes the Telegram context that enables progress tracking below.
+
 ### Progress indicators
 
-Progress is **fully automatic**. Hooks spawn a background daemon that:
+Once the `react` call establishes context, progress is **fully automatic**. Hooks spawn a background daemon that:
 
 - Keeps "typing..." visible for up to 5 minutes (including during subagent runs)
 - Edits the reply message with a live step log showing each tool as it completes
