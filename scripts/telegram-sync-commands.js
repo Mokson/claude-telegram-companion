@@ -298,12 +298,11 @@ function buildCommands(skills, config) {
 
 // --- Telegram API ---
 
-function setMyCommands(token, commands) {
+function setMyCommands(token, commands, scope) {
   return new Promise((resolve, reject) => {
-    const data = JSON.stringify({
-      commands,
-      scope: { type: 'all_private_chats' }
-    });
+    const body = { commands };
+    if (scope) body.scope = scope;
+    const data = JSON.stringify(body);
     const options = {
       hostname: 'api.telegram.org',
       path: `/bot${token}/setMyCommands`,
@@ -365,7 +364,14 @@ async function main() {
   const commands = buildCommands(skills, config);
 
   // 5. Sync to Telegram
-  await setMyCommands(token, commands);
+  // The official plugin sets commands at all_private_chats scope on bot start,
+  // which overrides default scope. Use per-chat scope (highest priority) from
+  // access.json allowlist so our commands can't be overridden.
+  const access = readJSON(path.join(TELEGRAM_DIR, 'access.json'));
+  const chatIds = (access && access.allowFrom) || [];
+  for (const chatId of chatIds) {
+    await setMyCommands(token, commands, { type: 'chat', chat_id: chatId });
+  }
 }
 
 main().catch(err => {

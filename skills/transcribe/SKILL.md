@@ -33,7 +33,7 @@ whisper-cli -m "$MODEL" --no-timestamps -f "$WAV_PATH" 2>/dev/null
 rm -f "$WAV_PATH"
 ```
 
-3. Use the transcribed text as the user's message and respond accordingly.
+3. Use the transcribed text as the user's message and respond accordingly. When replying to Telegram with `format: "markdownv2"`, escape all special characters in the response (including any quoted transcription text).
 
 ## If Transcription Fails
 
