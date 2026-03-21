@@ -1,125 +1,74 @@
 ---
 name: formatting
-description: This skill should be used when replying to Telegram messages, formatting text for Telegram, using the telegram-progress send or edit tools, or when the user asks to "format for Telegram", "style Telegram message", or "send formatted message". Provides HTML formatting rules for Telegram Bot API messages. Not triggered by general markdown or HTML questions unrelated to Telegram.
+description: >-
+  This skill should be used when replying to Telegram messages or formatting
+  text for Telegram. Provides MarkdownV2 formatting rules for the official
+  plugin's reply and edit_message tools. Not triggered by general markdown
+  questions unrelated to Telegram.
 ---
 
 # Telegram Message Formatting
 
-Format all Telegram replies using HTML parse mode via the `telegram-progress` MCP server's `send` and `edit` tools. The plugin's `reply` and `edit_message` tools send plain text only.
+Format Telegram replies using the official plugin's `reply` tool with `format: "markdownv2"`.
 
-## Tools
-
-| Tool | Purpose |
-|------|---------|
-| `telegram-progress` `send` | Send formatted message (supports `format: "html"`) |
-| `telegram-progress` `edit` | Edit message with formatting (supports `format: "html"`) |
-| Plugin `reply` | Plain text only. Use only for file attachments. |
-| Plugin `edit_message` | Plain text only. Avoid for formatted content. |
-
-## HTML Formatting Reference
-
-### Supported Tags
+## MarkdownV2 Syntax
 
 ```
-<b>bold</b>
-<i>italic</i>
-<u>underline</u>
-<s>strikethrough</s>
-<code>inline code</code>
-<pre>code block</pre>
-<pre><code class="language-python">highlighted code</code></pre>
-<a href="https://example.com">link text</a>
-<blockquote>block quote</blockquote>
-<blockquote expandable>expandable quote (collapsed by default)</blockquote>
-<tg-spoiler>hidden until tapped</tg-spoiler>
-<tg-emoji emoji-id="5368324170671202286">emoji</tg-emoji>
+*bold*
+_italic_
+__underline__
+~strikethrough~
+||spoiler||
+`inline code`
+```language
+code block
 ```
-
-### Nesting
-
-Tags nest freely. Common patterns:
-
-```html
-<b>Bold with <i>italic</i> inside</b>
-<b><i><u>bold italic underlined</u></i></b>
-<blockquote><b>Heading</b>
-Body text with <code>code</code></blockquote>
+[link text](https://example.com)
+>block quote (each line must start with >)
 ```
 
 ### Escaping
 
-Escape these characters in regular text (outside tags):
+Outside of code blocks, escape these characters with a preceding `\`:
 
-| Character | Escape |
-|-----------|--------|
-| `<` | `&lt;` |
-| `>` | `&gt;` |
-| `&` | `&amp;` |
+```
+_ * [ ] ( ) ~ ` > # + - = | { } . !
+```
 
-Inside `<pre>` and `<code>` blocks, no escaping needed except for the closing tag itself.
+Example: `Total: 3\.5\!` not `Total: 3.5!`
+
+Inside `` `inline code` `` and ` ```code blocks``` `, only `` ` `` and `\` need escaping.
 
 ## Formatting Guidelines
 
-### Structure
+**Structure** - Use MarkdownV2 for visual hierarchy:
 
-Use HTML tags for visual hierarchy, not plain-text workarounds:
+```
+*Section Title*
 
-```html
-<b>Section Title</b>
+Regular text with `inline code` and *emphasis*\.
 
-Regular paragraph text with <code>inline code</code> and <b>emphasis</b>.
+>Important callout or quoted content
 
-<blockquote>Important callout or quoted content</blockquote>
-
-<pre>multi-line
-code output</pre>
+\`\`\`
+multi\-line code output
+\`\`\`
 ```
 
-### Lists
+**Lists** - Plain dashes with line breaks:
 
-Telegram has no list tags. Use plain dashes or bullets with line breaks:
-
-```html
-<b>Changes:</b>
-- Task renamed to <code>Buy groceries</code>
-- Priority set to <b>p2</b>
-- Moved to <i>Personal</i> project
+```
+*Changes:*
+\- Task renamed to `Buy groceries`
+\- Priority set to *p2*
+\- Moved to _Personal_ project
 ```
 
-### Code
+**What to avoid:**
+- Do not use HTML tags. The MarkdownV2 parser ignores them.
+- Do not forget to escape special characters. An unescaped `.` or `-` will cause the entire message to fail.
+- Do not nest formatting across line boundaries.
 
-Use `<code>` for inline references (file names, commands, values). Use `<pre>` for multi-line output or code blocks:
+## Fallback
 
-```html
-Run <code>npm install</code> in the project root.
-
-<pre><code class="language-bash">cd ~/project
-npm install
-npm run build</code></pre>
-```
-
-### Links
-
-```html
-See <a href="https://example.com/docs">the documentation</a> for details.
-```
-
-### What to Avoid
-
-- Do not use Markdown syntax (`**bold**`, `` `code` ``). The HTML parser ignores it.
-- Do not use `<br>` tags. Use literal newlines.
-- Do not use `<p>` tags. Use double newlines for paragraph breaks.
-- Do not use `<h1>`-`<h6>`. Use `<b>` for headings with a newline after.
-- Do not nest `<pre>` inside `<blockquote>` (Telegram rejects it).
-- Do not use HTML entities other than `&lt;`, `&gt;`, `&amp;` (others are unsupported).
-
-## Fallback Behavior
-
-The `send` and `edit` tools automatically retry as plain text if Telegram rejects the HTML. Malformed tags cause the entire message to fail parsing, so always close tags properly.
-
-## Additional Resources
-
-### Reference Files
-
-For the complete tag reference with edge cases and examples:
-- **`references/html-reference.md`** - Full HTML entity reference with nesting rules, language codes, and character limits
+If formatting causes errors, retry with plain text (omit `format` parameter or use `format: "text"`).

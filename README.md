@@ -1,6 +1,6 @@
 # claude-telegram-companion
 
-Companion plugin that upgrades Claude Code's Telegram channel with rich formatting, live progress, and voice transcription.
+Companion plugin that adds live progress tracking, voice transcription, and command menu sync to Claude Code's Telegram channel.
 
 <img src="assets/typing.png" width="220" alt="Persistent typing indicator" />
 
@@ -8,7 +8,6 @@ Companion plugin that upgrades Claude Code's Telegram channel with rich formatti
 
 | Without | With |
 | --- | --- |
-| Plain text replies | HTML: bold, code, links, blockquotes |
 | Typing vanishes after 5s | Typing persists for up to 5 minutes |
 | Silent multi-step tasks | Live step-by-step progress in chat |
 | Errors lost in terminal | Errors auto-forwarded to Telegram |
@@ -24,21 +23,19 @@ Companion plugin that upgrades Claude Code's Telegram channel with rich formatti
 
 Restart Claude Code, then run `/claude-telegram-companion:setup`.
 
-**Requires:** Official `telegram` plugin enabled, [Bun](https://bun.sh).
+**Requires:** Official `telegram` plugin enabled.
 
 ## How It Works
 
 This plugin sits alongside the official Telegram plugin. Same bot token, same access control, no conflicts.
 
-The official plugin handles polling and message delivery. This plugin enhances everything on the output side through three hooks and a companion MCP server:
+The official plugin handles polling, message delivery, and formatted replies. This plugin adds UX enhancements through three hooks:
 
 **PostToolUse hook** drives the core experience. It watches for `react` calls to establish Telegram context, auto-sends a progress message on the first tool call, spawns a background typing daemon, and cleans up when Claude replies. If a tool fails before any reply is sent, the error goes straight to Telegram.
 
 **PreToolUse hook** feeds the daemon each tool's label so progress updates show what's happening right now.
 
 **SessionStart hook** discovers your installed skills and syncs them to BotFather's `/` command menu.
-
-**MCP server** provides `send` and `edit` tools with HTML formatting, auto-chunking, and parse-error fallback.
 
 ## Voice Transcription
 

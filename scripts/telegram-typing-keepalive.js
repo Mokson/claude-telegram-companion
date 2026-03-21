@@ -24,21 +24,14 @@ const { spawn } = require('child_process');
 
 const MODE = process.argv[2] || 'post';
 
-// Match both direct and plugin-installed tool name formats.
-// Direct: mcp__telegram__react, mcp__telegram_progress__send
-// Plugin: mcp__plugin_telegram_telegram__react, mcp__plugin_claude_telegram_companion_telegram_progress__send
-function isTelegramChannelTool(name) {
+// Match official telegram plugin tool names.
+// Plugin-installed: mcp__plugin_telegram_telegram__react
+// Direct: mcp__telegram__react
+function isTelegramTool(name) {
   return name.startsWith('mcp__plugin_telegram_telegram__')
     || name.startsWith('mcp__telegram__');
 }
-function isProgressTool(name) {
-  return name.includes('telegram_progress__');
-}
-function isTelegramTool(name) {
-  return isTelegramChannelTool(name) || isProgressTool(name);
-}
 function getTelegramAction(name) {
-  // Extract the tool name after the last __
   const parts = name.split('__');
   return parts[parts.length - 1] || '';
 }
