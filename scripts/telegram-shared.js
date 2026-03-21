@@ -55,10 +55,10 @@ function formatProgress(entries, currentTool) {
   const lines = [];
   if (truncated > 0) lines.push(`<i>... ${truncated} earlier steps</i>`);
   for (const entry of visible) {
-    lines.push(`\u2713 ${escapeHtml(entry.label || 'Working').slice(0, 50)}`);
+    lines.push(`\u2713 ${escapeHtml(entry.label || 'Working').slice(0, 80)}`);
   }
   if (currentTool && !doneLabels.has(currentTool)) {
-    lines.push(`\u25B8 ${escapeHtml(currentTool).slice(0, 50)}\u2026`);
+    lines.push(`\u25B8 ${escapeHtml(currentTool).slice(0, 80)}\u2026`);
   }
   return '<blockquote>' + lines.join('\n') + '</blockquote>';
 }

@@ -103,6 +103,27 @@ function handlePreToolUse(toolName, toolInput, sessionId) {
   if (!statusUpdatesEnabled()) process.exit(0);
 
   try { fs.writeFileSync(CURRENT_TOOL_FILE, label); } catch {}
+
+  // First visible tool: send progress message and spawn daemon eagerly
+  // so long-running tools appear in-progress immediately
+  if (!ctx.progress_msg_id && getToken()) {
+    try { fs.unlinkSync(STOP_FILE); } catch {}
+    const text = formatProgress([], label);
+    telegramPostSync('sendMessage', {
+      chat_id: ctx.chat_id,
+      text,
+      parse_mode: 'HTML',
+    }, (msgId) => {
+      if (msgId) {
+        ctx.progress_msg_id = String(msgId);
+        ctx.timestamp = now();
+        writeActive(ctx);
+        spawnDaemon(ctx.chat_id, ctx.progress_msg_id);
+      }
+    });
+    return;
+  }
+
   process.exit(0);
 }
 
