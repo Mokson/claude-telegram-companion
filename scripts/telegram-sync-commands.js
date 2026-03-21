@@ -407,17 +407,21 @@ async function main() {
 
   // 2. Read config (optional; use defaults if missing)
   const config = readJSON(path.join(TELEGRAM_DIR, 'command-config.json')) || {
-    commands: { exclude: { plugins: [], skills: [] }, aliases: {}, extra: [] },
+    commands: { sync: true, exclude: { plugins: [], skills: [] }, aliases: {}, extra: [] },
     progress: { statusUpdates: true }
   };
 
-  // 3. Discover skills
+  // 3. Check if command sync is enabled (default: true)
+  const syncEnabled = (config.commands || {}).sync !== false;
+  if (!syncEnabled) return;
+
+  // 4. Discover skills
   const skills = discoverSkills();
 
-  // 4. Build command list
+  // 5. Build command list
   const commands = buildCommands(skills, config);
 
-  // 5. Sync to Telegram
+  // 6. Sync to Telegram
   // The official plugin sets commands at all_private_chats scope on bot start,
   // which overrides default scope. Use per-chat scope (highest priority) from
   // access.json allowlist so our commands can't be overridden.

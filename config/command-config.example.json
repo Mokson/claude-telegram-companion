@@ -1,5 +1,6 @@
 {
   "commands": {
+    "sync": true,
     "exclude": {
       "plugins": [],
       "skills": []
