@@ -100,12 +100,12 @@ function formatProgress(entries, currentTool) {
   if (truncated > 0) lines.push(`<i>... ${truncated} earlier steps</i>`);
   for (const entry of visible) {
     const label = escapeHtml(entry.label || 'Working').slice(0, 50);
-    lines.push(`\u2705 ${label}`);
+    lines.push(`\u25CF ${label}`);
   }
   // Show current tool only if not already in done log
   if (currentTool && !doneLabels.has(currentTool)) {
     const label = escapeHtml(currentTool).slice(0, 50);
-    lines.push(`\u23F3 ${label}`);
+    lines.push(`\u25CB ${label}`);
   }
 
   return '<blockquote>' + lines.join('\n') + '</blockquote>';
