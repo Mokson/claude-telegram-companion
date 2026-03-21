@@ -399,27 +399,27 @@ const HIDDEN_TOOLS = new Set([
 function formatToolLabel(toolName, toolInput) {
   if (HIDDEN_TOOLS.has(toolName)) return null;
 
-  if (toolName === 'Agent') return toolInput.description || 'Processing';
+  if (toolName === 'Agent') return `Agent(${toolInput.description || 'processing'})`;
   if (toolName === 'Skill') {
     const skill = toolInput.skill || '';
-    // Strip plugin prefix: "claude-telegram-companion:transcribe" → "transcribe"
     const name = skill.includes(':') ? skill.split(':').pop() : skill;
-    return name || null;
+    return name ? `Skill(${name})` : null;
   }
   if (toolName === 'Bash') {
-    if (toolInput.description) return toolInput.description;
-    const cmd = toolInput.command || '';
-    return cmd.slice(0, 60).replace(/\n.*/s, '').trim() || 'Running command';
+    const desc = toolInput.description
+      || toolInput.command?.slice(0, 60).replace(/\n.*/s, '').trim()
+      || 'command';
+    return `Bash(${desc})`;
   }
   if (toolName === 'Write') {
-    const name = path.basename(toolInput.file_path || '');
-    return name ? `Writing ${name}` : 'Writing file';
+    const name = path.basename(toolInput.file_path || '') || 'file';
+    return `Write(${name})`;
   }
   if (toolName === 'Edit') {
-    const name = path.basename(toolInput.file_path || '');
-    return name ? `Editing ${name}` : 'Editing file';
+    const name = path.basename(toolInput.file_path || '') || 'file';
+    return `Edit(${name})`;
   }
-  if (toolName === 'Grep') return 'Searching codebase';
+  if (toolName === 'Grep') return 'Grep';
   if (toolName.startsWith('mcp__')) {
     const parts = toolName.split('__');
     const service = parts[1] || '';
