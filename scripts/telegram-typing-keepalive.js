@@ -205,7 +205,7 @@ function handlePostToolUse(data, toolName, toolInput) {
     const escaped = escapeHtml(label);
     telegramPostSync('sendMessage', {
       chat_id: ctx.chat_id,
-      text: `<blockquote>\u25CF ${escaped}</blockquote>`,
+      text: `<blockquote>${escaped}</blockquote>`,
       parse_mode: 'HTML',
     }, (msgId) => {
       if (msgId) {
@@ -366,10 +366,10 @@ function formatProgress(entries, currentTool) {
   const lines = [];
   if (truncated > 0) lines.push(`<i>... ${truncated} earlier steps</i>`);
   for (const entry of visible) {
-    lines.push(`\u25CF ${escapeHtml(entry.label || 'Working').slice(0, 50)}`);
+    lines.push(escapeHtml(entry.label || 'Working').slice(0, 50));
   }
   if (currentTool && !doneLabels.has(currentTool)) {
-    lines.push(`\u25CB ${escapeHtml(currentTool).slice(0, 50)}`);
+    lines.push(`\u25B8 ${escapeHtml(currentTool).slice(0, 50)}\u2026`);
   }
   return '<blockquote>' + lines.join('\n') + '</blockquote>';
 }
