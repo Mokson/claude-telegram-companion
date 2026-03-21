@@ -81,9 +81,7 @@ process.stdin.on('end', () => {
   clearTimeout(stdinTimeout);
   try {
     const data = JSON.parse(input);
-    // Normalize hyphens in MCP server names (e.g. "mcp__telegram-progress__send" → "mcp__telegram_progress__send")
-    const rawToolName = data.tool_name || '';
-    const toolName = rawToolName.startsWith('mcp__') ? rawToolName.replace(/-/g, '_') : rawToolName;
+    const toolName = data.tool_name || '';
     const toolInput = data.tool_input || {};
     const sessionId = data.session_id || '';
 
@@ -359,8 +357,6 @@ function formatToolLabel(toolName, toolInput) {
     const parts = toolName.split('__');
     const service = parts[1] || '';
     const op = (parts.slice(2).join('-') || '').replace(/-/g, ' ');
-    if (service === 'todoist') return `Todoist: ${op}`.slice(0, 50);
-    if (service === 'atlassian') return `Atlassian: ${op}`.slice(0, 50);
     return `${service}: ${op}`.slice(0, 50);
   }
   return toolName;

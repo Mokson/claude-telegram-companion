@@ -68,6 +68,7 @@ Key points in this example:
 - List dashes: `\- item` not `- item`
 - Exclamations: `Done\!` not `Done!`
 - Parentheses in text: `\(optional\)` not `(optional)`
+- Equals signs: `deficiency \= 40%` not `deficiency = 40%`
 - URLs inside `[text](url)` do not need escaping
 - Code block backticks: use ```` ``` ```` NOT `\`\`\``
 - Content inside code blocks: no escaping needed

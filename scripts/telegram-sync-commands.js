@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Sync discovered skills to Telegram BotFather command menu.
-// Called by SessionStart hook. Silent on success, stderr on failure. Exit 0 always.
+// Called by SessionStart hook. Injects companion instructions to stdout, syncs commands. Exit 0 always.
 
 const fs = require('fs');
 const path = require('path');
@@ -216,39 +216,6 @@ function discoverSkills() {
     } catch {}
   }
 
-  // 5. Discover skills from known marketplace caches not in enabledPlugins
-  //    (e.g. obsidian-skills, which is auto-loaded by the harness)
-  const knownCacheMarketplaces = subdirs(CACHE_DIR);
-  const enabledMarketplaces = new Set(
-    Object.keys(enabledPlugins).map(k => k.slice(k.lastIndexOf('@') + 1))
-  );
-  for (const mkt of knownCacheMarketplaces) {
-    if (enabledMarketplaces.has(mkt)) continue;
-    if (mkt.startsWith('temp_')) continue;
-    const mktDir = path.join(CACHE_DIR, mkt);
-    for (const pluginName of subdirs(mktDir)) {
-      const versionDir = latestVersionDir(path.join(mktDir, pluginName));
-      if (!versionDir) continue;
-      const skillsBase = path.join(versionDir, 'skills');
-      const origin = deriveOrigin(pluginName);
-      for (const skillDir of subdirs(skillsBase)) {
-        const f = path.join(skillsBase, skillDir, 'SKILL.md');
-        const fm = parseFrontmatter(f);
-        if (!fm) continue;
-        const id = `${pluginName}:${fm.name}`;
-        if (skills.some(s => s.id === id)) continue;
-        skills.push({
-          id,
-          name: fm.name,
-          description: fm.description,
-          origin,
-          source: 'marketplace-cache',
-          pluginKey: null
-        });
-      }
-    }
-  }
-
   return skills;
 }
 
@@ -272,10 +239,10 @@ function buildCommands(skills, config) {
   // Support both v2 (commands.*) and v1 (flat) schema
   const cmds = config.commands || {};
   const exclude = cmds.exclude || {};
-  const excludePlugins = new Set(exclude.plugins || config.excludePlugins || []);
-  const excludeProject = new Set(exclude.skills || config.excludeProject || []);
-  const include = cmds.aliases || config.include || {};
-  const extra = cmds.extra || config.extra || [];
+  const excludePlugins = new Set(exclude.plugins || []);
+  const excludeProject = new Set(exclude.skills || []);
+  const include = cmds.aliases || {};
+  const extra = cmds.extra || [];
   const seen = new Set();
   const commands = [];
 
