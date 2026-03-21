@@ -47,6 +47,6 @@ Follow this flow:
 
 ### Media Messages
 
-Voice/audio messages are auto-transcribed by the plugin and arrive as text. If transcription is not configured, they arrive as "(voice message)" with `audio_path` in meta.
+Voice and audio messages arrive with `attachment_kind` of `voice` or `audio` and an `attachment_file_id`. Use the `transcribe` skill to download and transcribe them.
 
-Documents arrive with `document_path` and `file_name`. Read if text/PDF. Photos: `image_path` - Read with Read tool. Videos: `video_path` - acknowledge receipt.
+Documents arrive with `attachment_file_id`. Download with `download_attachment`, then Read if text/PDF. Photos arrive with `image_path` already downloaded. Videos: acknowledge receipt.
