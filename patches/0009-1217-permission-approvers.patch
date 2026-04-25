@@ -1,0 +1,111 @@
+diff --git a/external_plugins/telegram/ACCESS.md b/external_plugins/telegram/ACCESS.md
+index f762daf56..e019a216b 100644
+--- a/external_plugins/telegram/ACCESS.md
++++ b/external_plugins/telegram/ACCESS.md
+@@ -105,6 +105,9 @@ Configure outbound behavior with `/telegram:access set <key> <value>`.
+ | `/telegram:access group add -1001654782309` | Enable a group. Flags: `--no-mention` (also requires disabling privacy mode), `--allow id1,id2`. |
+ | `/telegram:access group rm -1001654782309` | Disable a group. |
+ | `/telegram:access set ackReaction 👀` | Set a config key: `ackReaction`, `replyToMode`, `textChunkLimit`, `chunkMode`, `mentionPatterns`. |
++| `/telegram:access approver add 412587349` | Add a user ID to the permission approvers list. Only these users receive permission relay requests. |
++| `/telegram:access approver remove 412587349` | Remove a user from the permission approvers list. |
++| `/telegram:access approver list` | Show current permission approvers. Falls back to `allowFrom` if none set. |
+ 
+ ## Config file
+ 
+@@ -142,6 +145,10 @@ Configure outbound behavior with `/telegram:access set <key> <value>`.
+   "textChunkLimit": 4096,
+ 
+   // length = cut at limit. newline = prefer paragraph boundaries.
+-  "chunkMode": "newline"
++  "chunkMode": "newline",
++
++  // User IDs who receive permission relay requests.
++  // Falls back to allowFrom if absent or empty.
++  "permissionApprovers": ["412587349"]
+ }
+ ```
+diff --git a/external_plugins/telegram/server.ts b/external_plugins/telegram/server.ts
+index 3211bbae9..ab9e55c7b 100644
+--- a/external_plugins/telegram/server.ts
++++ b/external_plugins/telegram/server.ts
+@@ -98,6 +98,8 @@ type Access = {
+   textChunkLimit?: number
+   /** Split on paragraph boundaries instead of hard char count. */
+   chunkMode?: 'length' | 'newline'
++  /** User IDs who receive permission relay requests. Falls back to allowFrom if absent or empty. */
++  permissionApprovers?: string[]
+ }
+ 
+ function defaultAccess(): Access {
+@@ -142,6 +144,7 @@ function readAccessFile(): Access {
+       replyToMode: parsed.replyToMode,
+       textChunkLimit: parsed.textChunkLimit,
+       chunkMode: parsed.chunkMode,
++      permissionApprovers: parsed.permissionApprovers,
+     }
+   } catch (err) {
+     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return defaultAccess()
+@@ -405,7 +408,11 @@ mcp.setNotificationHandler(
+       .text('See more', `perm:more:${request_id}`)
+       .text('✅ Allow', `perm:allow:${request_id}`)
+       .text('❌ Deny', `perm:deny:${request_id}`)
+-    for (const chat_id of access.allowFrom) {
++    const targets =
++      access.permissionApprovers && access.permissionApprovers.length > 0
++        ? access.permissionApprovers
++        : access.allowFrom
++    for (const chat_id of targets) {
+       void bot.api.sendMessage(chat_id, text, { reply_markup: keyboard }).catch(e => {
+         process.stderr.write(`permission_request send to ${chat_id} failed: ${e}\n`)
+       })
+diff --git a/external_plugins/telegram/skills/access/SKILL.md b/external_plugins/telegram/skills/access/SKILL.md
+index 5f112cfe0..dabc5e24b 100644
+--- a/external_plugins/telegram/skills/access/SKILL.md
++++ b/external_plugins/telegram/skills/access/SKILL.md
+@@ -43,17 +43,18 @@ Arguments passed: `$ARGUMENTS`
+       "createdAt": <ms>, "expiresAt": <ms>
+     }
+   },
+-  "mentionPatterns": ["@mybot"]
++  "mentionPatterns": ["@mybot"],
++  "permissionApprovers": ["<senderId>"]
+ }
+ ```
+ 
+-Missing file = `{dmPolicy:"pairing", allowFrom:[], groups:{}, pending:{}}`.
++Missing file = `{dmPolicy:"pairing", allowFrom:[], groups:{}, pending:{}, permissionApprovers:[]}`.
+ 
+ ---
+ 
+ ## Dispatch on arguments
+ 
+-Parse `$ARGUMENTS` (space-separated). If empty or unrecognized, show status.
++Parse `$ARGUMENTS` (space-separated). Check multi-word prefixes first (`group`, `approver`) before single-word commands. If empty or unrecognized, show status.
+ 
+ ### No args — status
+ 
+@@ -106,6 +107,24 @@ Parse `$ARGUMENTS` (space-separated). If empty or unrecognized, show status.
+ 
+ 1. Read, `delete groups[<groupId>]`, write.
+ 
++### `approver add <senderId>`
++
++1. Read access.json (create default if missing).
++2. Add `<senderId>` to `permissionApprovers` (dedupe, create array if missing).
++3. Write back. Confirm.
++
++### `approver remove <senderId>`
++
++1. Read access.json.
++2. Filter `permissionApprovers` to exclude `<senderId>`.
++3. If array is empty after removal, delete the key entirely (falls back to `allowFrom`).
++4. Write back. Confirm.
++
++### `approver list`
++
++1. Read access.json.
++2. Show `permissionApprovers` list, or `"none set (falls back to allowFrom)"` if absent or empty.
++
+ ### `set <key> <value>`
+ 
+ Delivery/UX config. Supported keys: `ackReaction`, `replyToMode`,
