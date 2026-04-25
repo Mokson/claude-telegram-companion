@@ -385,15 +385,22 @@ function checkApprovals(): void {
     void bot.api.sendMessage(senderId, "Paired! Say hi to Claude.").then(
       () => rmSync(file, { force: true }),
       err => {
-        process.stderr.write(`telegram channel: failed to send approval confirm: ${err}\n`)
-        // Remove anyway — don't loop on a broken send.
-        rmSync(file, { force: true })
+        // Leave the marker file: the next 5s tick will retry. Previously a
+        // transient send failure dropped the confirmation AND the marker, so
+        // a paired user would never know they were approved.
+        process.stderr.write(`telegram channel: approval confirm send failed for ${senderId}: ${err} — will retry\n`)
       },
     )
   }
 }
 
 if (!STATIC) setInterval(checkApprovals, 5000).unref()
+
+// Retry queued inbound notifications every 15s. Covers the window where the
+// MCP transport flickered but is now live again, between full restarts.
+// queueReplayPending() reads CLAUDE_QUEUE_PENDING (populated by handleInbound).
+// unref() so the drain interval doesn't keep the process alive by itself.
+setInterval(() => { void queueReplayPending() }, 15000).unref()
 
 // Telegram caps messages at 4096 chars. Split long replies, preferring
 // paragraph boundaries when chunkMode is 'newline'.
