@@ -397,12 +397,23 @@ async function main() {
     return;
   }
 
-  // Inject companion instructions (Claude Code surfaces SessionStart stdout as <system-reminder>)
+  // Inject companion instructions + MarkdownV2 skill content at session start.
+  // This pre-loads the formatting rules so Claude doesn't need to call the Skill tool.
+  const skillPath = path.join(CLAUDE_PLUGIN_ROOT || __dirname.replace(/\/scripts$/, ''), 'skills', 'telegram-markdownv2', 'SKILL.md');
+  let skillContent = '';
+  try {
+    const raw = fs.readFileSync(skillPath, 'utf8');
+    // Strip YAML frontmatter
+    skillContent = raw.replace(/^---[\s\S]*?---\s*/, '').trim();
+  } catch {}
+
   process.stdout.write([
     '[telegram-companion] When handling Telegram messages:',
     '1. FIRST call react with emoji \u{1F440} on the incoming message (enables progress tracking).',
-    '2. Use reply with format: "markdownv2" for responses. ALWAYS load the telegram-markdownv2 skill first before composing any Telegram reply. Escape _ * [ ] ( ) ~ > # + - = | { } . ! outside code blocks.',
+    '2. Use reply with format: "markdownv2" for responses. Escape _ * [ ] ( ) ~ > # + - = | { } . ! outside code blocks.',
     '3. Voice/audio messages (attachment_kind: voice/audio) have attachment_file_id. Use the download_attachment tool to fetch the file.',
+    '',
+    skillContent,
   ].join('\n') + '\n');
 
   // 2. Read config (optional; use defaults if missing)
