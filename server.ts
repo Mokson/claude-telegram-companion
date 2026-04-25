@@ -90,6 +90,23 @@ const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
 const bot = new Bot(TOKEN)
 let botUsername = ''
 
+// Optional poll-loop heartbeat for external watchdogs. When
+// TELEGRAM_PLUGIN_HEARTBEAT is set, the plugin writes the current unix
+// timestamp to that path on every successful getUpdates round-trip. Detects
+// stalled polling that the kernel can't see (process alive, socket open,
+// long-poll loop wedged). No-op when unset.
+const HEARTBEAT_PATH = process.env.TELEGRAM_PLUGIN_HEARTBEAT
+if (HEARTBEAT_PATH) {
+  try { mkdirSync(join(HEARTBEAT_PATH, '..'), { recursive: true }) } catch {}
+  bot.api.config.use(async (prev, method, payload, signal) => {
+    const result = await prev(method, payload, signal)
+    if (method === 'getUpdates') {
+      try { writeFileSync(HEARTBEAT_PATH, String(Math.floor(Date.now() / 1000))) } catch {}
+    }
+    return result
+  })
+}
+
 type PendingEntry = {
   senderId: string
   chatId: string
