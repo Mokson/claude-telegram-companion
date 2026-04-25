@@ -1243,6 +1243,14 @@ async function handleInbound(
 
   // image_path goes in meta only — an in-content "[image attached — read: PATH]"
   // annotation is forgeable by any allowlisted sender typing that string.
+  // Reply-to context: include the quoted message so Claude has conversational
+  // context. Truncate text to 200 chars so meta stays compact.
+  const replyTo = ctx.message?.reply_to_message
+  const replyMeta = replyTo ? {
+    reply_to_message_id: String(replyTo.message_id),
+    ...(replyTo.text ? { reply_to_text: replyTo.text.slice(0, 200) } : {}),
+  } : {}
+
   const params = {
     content: text,
     meta: {
@@ -1259,6 +1267,7 @@ async function handleInbound(
         ...(attachment.mime ? { attachment_mime: attachment.mime } : {}),
         ...(attachment.name ? { attachment_name: attachment.name } : {}),
       } : {}),
+      ...replyMeta,
     },
   }
 
