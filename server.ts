@@ -197,6 +197,7 @@ function acquirePollLock(): boolean {
 }
 
 const isPollingLeader = acquirePollLock()
+let queueReplayInFlight = false
 
 // Last-resort safety net — without these the process dies silently on any
 // unhandled promise rejection. With them it logs and keeps serving tools.
@@ -529,11 +530,16 @@ function checkApprovals(): void {
 
 if (!STATIC) setInterval(checkApprovals, 5000).unref()
 
-// Retry queued inbound notifications every 15s. Covers the window where the
-// MCP transport flickered but is now live again, between full restarts.
-// queueReplayPending() reads CLAUDE_QUEUE_PENDING (populated by handleInbound).
-// unref() so the drain interval doesn't keep the process alive by itself.
-setInterval(() => { void queueReplayPending() }, 15000).unref()
+// Re-scan pending/ every 15s to retry deliveries that failed during the
+// session (MCP transport flicker after long idle). Leader-only: with #1374
+// follower mode, both processes would otherwise drain the shared dir and
+// deliver duplicates to two separate Claude instances.
+// Periodic prune (6h) keeps delivered/ and pending/ from growing unbounded
+// across long-running sessions.
+if (isPollingLeader) {
+  setInterval(() => { void queueReplayPending() }, 15000).unref()
+  setInterval(() => { queuePrunePending(); queuePruneDelivered() }, 6 * 60 * 60 * 1000).unref()
+}
 
 // Telegram caps messages at 4096 chars. Split long replies, preferring
 // paragraph boundaries when chunkMode is 'newline'.
@@ -941,13 +947,27 @@ process.on('SIGHUP', shutdown)
 // Orphan watchdog: stdin events above don't reliably fire when the parent
 // chain (`bun run` wrapper → shell → us) is severed by a crash. Poll for
 // reparenting (POSIX) or a dead stdin pipe and self-terminate.
+// Followers also poll for leader liveness — without this, a follower whose
+// leader has died stays a follower forever, leaving polling broken until
+// the follower itself is restarted.
 const bootPpid = process.ppid
 setInterval(() => {
   const orphaned =
     (process.platform !== 'win32' && process.ppid !== bootPpid) ||
     process.stdin.destroyed ||
     process.stdin.readableEnded
-  if (orphaned) shutdown()
+  if (orphaned) { shutdown(); return }
+
+  if (!isPollingLeader && !shuttingDown) {
+    try {
+      const holder = parseInt(readFileSync(LOCK_FILE, 'utf8'), 10)
+      process.kill(holder, 0)
+    } catch {
+      // Lock holder is gone. Exit so the next session can become leader.
+      process.stderr.write('telegram channel: leader gone, exiting follower\n')
+      shutdown()
+    }
+  }
 }, 5000).unref()
 
 // Commands are DM-only. Responding in groups would: (1) leak pairing codes via
@@ -1366,35 +1386,62 @@ function queuePruneDelivered(): void {
   }
 }
 
-async function queueReplayPending(): Promise<void> {
+// Drop pending entries older than the TTL so a permanently-broken MCP pipe
+// can't fill the disk during a multi-day outage. Same TTL as delivered/.
+function queuePrunePending(): void {
   let files: string[]
   try {
-    files = readdirSync(CLAUDE_QUEUE_PENDING).sort()
+    files = readdirSync(CLAUDE_QUEUE_PENDING)
   } catch {
     return
   }
-  if (files.length === 0) return
-  process.stderr.write(`telegram channel: replaying ${files.length} pending inbound message(s)\n`)
+  const cutoff = Date.now() - CLAUDE_QUEUE_TTL_MS
   for (const name of files) {
     const full = join(CLAUDE_QUEUE_PENDING, name)
-    let params: unknown
     try {
-      params = JSON.parse(readFileSync(full, 'utf8'))
-    } catch (err) {
-      process.stderr.write(`telegram channel: pending/${name} unreadable, dropping: ${err}\n`)
-      try { rmSync(full, { force: true }) } catch {}
-      continue
-    }
+      if (statSync(full).mtimeMs < cutoff) rmSync(full, { force: true })
+    } catch {}
+  }
+}
+
+async function queueReplayPending(): Promise<void> {
+  // Concurrency guard: startup, the 15s tick, and shutdown can each invoke
+  // this. Without a guard, two loops race to rename the same file and the
+  // second renameSync throws.
+  if (queueReplayInFlight) return
+  queueReplayInFlight = true
+  try {
+    let files: string[]
     try {
-      await mcp.notification({
-        method: 'notifications/claude/channel',
-        params: params as Record<string, unknown>,
-      })
-      queueMarkDelivered(full)
-    } catch (err) {
-      process.stderr.write(`telegram channel: replay failed at ${name}, stopping: ${err}\n`)
+      files = readdirSync(CLAUDE_QUEUE_PENDING).sort()
+    } catch {
       return
     }
+    if (files.length === 0) return
+    process.stderr.write(`telegram channel: replaying ${files.length} pending inbound message(s)\n`)
+    for (const name of files) {
+      const full = join(CLAUDE_QUEUE_PENDING, name)
+      let params: unknown
+      try {
+        params = JSON.parse(readFileSync(full, 'utf8'))
+      } catch (err) {
+        process.stderr.write(`telegram channel: pending/${name} unreadable, dropping: ${err}\n`)
+        try { rmSync(full, { force: true }) } catch {}
+        continue
+      }
+      try {
+        await mcp.notification({
+          method: 'notifications/claude/channel',
+          params: params as Record<string, unknown>,
+        })
+        queueMarkDelivered(full)
+      } catch (err) {
+        process.stderr.write(`telegram channel: replay failed at ${name}, stopping: ${err}\n`)
+        return
+      }
+    }
+  } finally {
+    queueReplayInFlight = false
   }
 }
 

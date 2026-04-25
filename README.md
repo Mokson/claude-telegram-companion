@@ -67,4 +67,4 @@ Optional environment variables:
 
 ## License
 
-Apache-2.0 (MCP server) / MIT (skills, hooks, scripts).
+Apache-2.0. The MCP server is forked from [anthropics/claude-plugins-official](https://github.com/anthropics/claude-plugins-official) under Apache-2.0; companion skills, hooks, and scripts inherit the same license for consistency.

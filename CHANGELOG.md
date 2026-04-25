@@ -52,3 +52,21 @@ Decoupled fork. The plugin now hosts its own Telegram MCP server and no longer d
 ## v1.x
 
 See git log on `main` for v1.0.0 → v1.1.0 history.
+
+[#976]: https://github.com/anthropics/claude-plugins-official/pull/976
+[#978]: https://github.com/anthropics/claude-plugins-official/pull/978
+[#980]: https://github.com/anthropics/claude-plugins-official/pull/980
+[#1003]: https://github.com/anthropics/claude-plugins-official/pull/1003
+[#1179]: https://github.com/anthropics/claude-plugins-official/pull/1179
+[#1217]: https://github.com/anthropics/claude-plugins-official/pull/1217
+[#1239]: https://github.com/anthropics/claude-plugins-official/pull/1239
+[#1285]: https://github.com/anthropics/claude-plugins-official/pull/1285
+[#1322]: https://github.com/anthropics/claude-plugins-official/pull/1322
+[#1325]: https://github.com/anthropics/claude-plugins-official/pull/1325
+[#1374]: https://github.com/anthropics/claude-plugins-official/pull/1374
+[#1410]: https://github.com/anthropics/claude-plugins-official/pull/1410
+[#1491]: https://github.com/anthropics/claude-plugins-official/pull/1491
+[#1504]: https://github.com/anthropics/claude-plugins-official/pull/1504
+[#1515]: https://github.com/anthropics/claude-plugins-official/pull/1515
+[#1560]: https://github.com/anthropics/claude-plugins-official/pull/1560
+[#1570]: https://github.com/anthropics/claude-plugins-official/pull/1570
