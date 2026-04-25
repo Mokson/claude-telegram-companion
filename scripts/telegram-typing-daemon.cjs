@@ -13,7 +13,7 @@ const fs = require('fs');
 const {
   PID_FILE, STOP_FILE,
   readToken, readProgressLog, readCurrentTool, formatProgress,
-} = require('./telegram-shared');
+} = require('./telegram-shared.cjs');
 
 const chatId = process.argv[2];
 const messageId = process.argv[3] || null;

@@ -25,7 +25,7 @@ const {
   LOG_FILE, PID_FILE, STOP_FILE, CURRENT_TOOL_FILE,
   readToken, escapeHtml,
   readProgressLog, readCurrentTool, formatProgress,
-} = require('./telegram-shared');
+} = require('./telegram-shared.cjs');
 
 const MODE = process.argv[2] || 'post';
 
@@ -43,7 +43,7 @@ function getTelegramAction(name) {
   const parts = name.split('__');
   return parts[parts.length - 1] || '';
 }
-const DAEMON_SCRIPT = path.join(__dirname, 'telegram-typing-daemon.js');
+const DAEMON_SCRIPT = path.join(__dirname, 'telegram-typing-daemon.cjs');
 
 const tmpDir = os.tmpdir();
 const ACTIVE_FILE = path.join(tmpDir, 'telegram-active.json');

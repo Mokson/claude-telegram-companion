@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "test -f \"${TMPDIR:-/tmp}/telegram-active.json\" && node \"${CLAUDE_PLUGIN_ROOT}/scripts/telegram-typing-keepalive.js\" pre || true",
+            "command": "test -f \"${TMPDIR:-/tmp}/telegram-active.json\" && node \"${CLAUDE_PLUGIN_ROOT}/scripts/telegram-typing-keepalive.cjs\" pre || true",
             "timeout": 3
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "test -f \"$HOME/.claude/channels/telegram/.env\" && node \"${CLAUDE_PLUGIN_ROOT}/scripts/telegram-typing-keepalive.js\" || true",
+            "command": "test -f \"$HOME/.claude/channels/telegram/.env\" && node \"${CLAUDE_PLUGIN_ROOT}/scripts/telegram-typing-keepalive.cjs\" || true",
             "timeout": 3
           }
         ]
@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "test -f \"$HOME/.claude/channels/telegram/.env\" && node \"${CLAUDE_PLUGIN_ROOT}/scripts/telegram-sync-commands.js\" || true",
+            "command": "test -f \"$HOME/.claude/channels/telegram/.env\" && node \"${CLAUDE_PLUGIN_ROOT}/scripts/telegram-sync-commands.cjs\" || true",
             "timeout": 5
           }
         ]
