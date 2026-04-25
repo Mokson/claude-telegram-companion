@@ -3,10 +3,12 @@ name: telegram-markdownv2
 description: >-
   This skill should be used when composing a reply to a Telegram message,
   calling the official plugin's reply or edit_message tools with format
-  "markdownv2", or when the user asks to "format for Telegram", "fix Telegram
-  formatting", or "send formatted message". Provides MarkdownV2 escaping rules
-  and syntax required by the Telegram Bot API. Not triggered by general
-  markdown or HTML questions unrelated to Telegram.
+  "markdownv2", when sending multiple photos as an album via "send media group",
+  "send photos together", "send album", or when the user asks to "format for
+  Telegram", "fix Telegram formatting", or "send formatted message". Provides
+  MarkdownV2 escaping rules, syntax, and media group sending via direct Bot API
+  calls. Not triggered by general markdown or HTML questions unrelated to
+  Telegram.
 ---
 
 # Telegram MarkdownV2 Formatting
@@ -80,6 +82,47 @@ Key points in this example:
 - HTML tags (the MarkdownV2 parser ignores them)
 - Nesting formatting across line boundaries
 - Wrapping entire messages in code blocks for non-code content
+
+## Sending Images
+
+### Single image
+
+Pass one file path in the `files` array of the `reply` tool:
+
+```
+reply(chat_id, text, format: "markdownv2", files: ["/path/to/image.jpg"])
+```
+
+The caption (text) supports MarkdownV2 formatting. Image renders inline with preview.
+
+### Multiple images as album
+
+The `reply` tool sends multiple files as separate messages. To send a photo album (grouped in one message), call the Telegram Bot API directly:
+
+```bash
+TOKEN=$(grep TELEGRAM_BOT_TOKEN ~/.claude/channels/telegram/.env | cut -d= -f2)
+
+curl -s "https://api.telegram.org/bot${TOKEN}/sendMediaGroup" \
+  -F "chat_id=<chat_id>" \
+  -F 'media=[{"type":"photo","media":"attach://p1","caption":"<caption>","parse_mode":"MarkdownV2"},{"type":"photo","media":"attach://p2"},{"type":"photo","media":"attach://p3"}]' \
+  -F "p1=@/path/photo1.jpg" \
+  -F "p2=@/path/photo2.jpg" \
+  -F "p3=@/path/photo3.jpg"
+```
+
+Rules for `sendMediaGroup`:
+- 2-10 photos per album
+- Only the first item's `caption` is displayed (applies to the whole album)
+- Caption limit: **1024 characters** (not the 4096 of regular text messages)
+- Set `parse_mode: "MarkdownV2"` on the caption item to use formatting
+- Escape the caption string per MarkdownV2 rules (same as reply text)
+- Because the caption is JSON inside a shell command, backslashes need **double escaping**: `\\` in JSON produces `\` for Telegram (e.g. `"4\\.8"` for `4.8`, `"\\(624\\)"` for `(624)`)
+- Attach files using `attach://<label>` in media and `-F "<label>=@<path>"` in form data
+- When the full text exceeds 1024 chars, send the album with a short caption (title + ratings), then send the full review via the plugin's `reply` tool as a separate message
+
+### Documents and non-image files
+
+Non-image files (PDF, CSV, etc.) are sent as documents with download link, not inline preview. Use the `reply` tool with `files` array as normal.
 
 ## Fallback
 
