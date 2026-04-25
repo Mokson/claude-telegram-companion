@@ -401,8 +401,8 @@ async function main() {
   process.stdout.write([
     '[telegram-companion] When handling Telegram messages:',
     '1. FIRST call react with emoji \u{1F440} on the incoming message (enables progress tracking).',
-    '2. Use reply with format: "markdownv2" for responses. Escape _ * [ ] ( ) ~ > # + - = | { } . ! outside code blocks.',
-    '3. Voice/audio messages (attachment_kind: voice/audio) have attachment_file_id. Use the transcribe skill.',
+    '2. Use reply with format: "markdownv2" for responses. ALWAYS load the telegram-markdownv2 skill first before composing any Telegram reply. Escape _ * [ ] ( ) ~ > # + - = | { } . ! outside code blocks.',
+    '3. Voice/audio messages (attachment_kind: voice/audio) have attachment_file_id. Use the download_attachment tool to fetch the file.',
   ].join('\n') + '\n');
 
   // 2. Read config (optional; use defaults if missing)
