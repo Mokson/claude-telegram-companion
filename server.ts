@@ -1003,11 +1003,11 @@ bot.catch(err => {
   process.stderr.write(`telegram channel: handler error (polling continues): ${err.error}\n`)
 })
 
-// Retry polling with backoff on any error. Previously only 409 was retried —
-// a single ETIMEDOUT/ECONNRESET/DNS failure rejected bot.start(), the catch
-// returned, and polling stopped permanently while the process stayed alive
-// (MCP stdin keeps it running). Outbound tools kept working but the bot was
-// deaf to inbound messages until a full restart.
+// Retry polling on 409 Conflict (zombie session) and transient network errors
+// (ECONNRESET, ETIMEDOUT, EAI_AGAIN, fetch failures, 5xx). Permanent errors
+// (e.g. 401 invalid token) exit fast. Without this, a single network hiccup
+// kills polling permanently while outbound tools keep working — bot is deaf
+// until full restart.
 void (async () => {
   for (let attempt = 1; ; attempt++) {
     try {
@@ -1031,20 +1031,41 @@ void (async () => {
       if (shuttingDown) return
       // bot.stop() mid-setup rejects with grammy's "Aborted delay" — expected, not an error.
       if (err instanceof Error && err.message === 'Aborted delay') return
+
       const is409 = err instanceof GrammyError && err.error_code === 409
+      const isTransient = !is409 && isTransientError(err)
+
+      if (!is409 && !isTransient) {
+        process.stderr.write(`telegram channel: polling failed (permanent): ${err}\n`)
+        return
+      }
       if (is409 && attempt >= 8) {
         process.stderr.write(
-          `telegram channel: 409 Conflict persists after ${attempt} attempts — ` +
-          `another poller is holding the bot token (stray 'bun server.ts' process or a second session). Exiting.\n`,
+          `telegram channel: 409 Conflict persists after ${attempt} attempts (another poller holds the token). Exiting.\n`,
         )
         return
       }
-      const delay = Math.min(1000 * attempt, 15000)
-      const detail = is409
-        ? `409 Conflict${attempt === 1 ? ' — another instance is polling (zombie session, or a second Claude Code running?)' : ''}`
-        : `polling error: ${err}`
-      process.stderr.write(`telegram channel: ${detail}, retrying in ${delay / 1000}s\n`)
+
+      const delay = Math.min(1000 * Math.max(attempt, 1), 30000)
+      if (is409) {
+        const detail = attempt <= 1 ? ' (zombie session, or a second Claude Code running?)' : ''
+        process.stderr.write(`telegram channel: 409 Conflict${detail}, retrying in ${delay / 1000}s\n`)
+      } else {
+        process.stderr.write(`telegram channel: transient error (attempt ${attempt}), retrying in ${delay / 1000}s: ${err}\n`)
+      }
       await new Promise(r => setTimeout(r, delay))
     }
   }
 })()
+
+function isTransientError(err: unknown): boolean {
+  if (err instanceof GrammyError) {
+    return err.error_code >= 500
+  }
+  if (err instanceof Error) {
+    const msg = err.message
+    if (/ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENETUNREACH|EAI_AGAIN|EPIPE|EHOSTUNREACH|socket hang up/i.test(msg)) return true
+    if (/fetch failed|network|TLS|certificate/i.test(msg)) return true
+  }
+  return false
+}
