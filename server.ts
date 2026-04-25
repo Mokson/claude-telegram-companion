@@ -356,7 +356,7 @@ function loadAccess(): Access {
 function assertAllowedChat(chat_id: string): void {
   const access = loadAccess()
   if (access.allowFrom.includes(chat_id)) return
-  if (chat_id in access.groups) return
+  if (chat_id in access.groups || '*' in access.groups) return
   if (chat_id in access.channels) return
   throw new Error(`chat ${chat_id} is not allowlisted — add via /telegram:access`)
 }
@@ -445,7 +445,7 @@ function gate(ctx: Context): GateResult {
 
   if (chatType === 'group' || chatType === 'supergroup') {
     const groupId = String(ctx.chat!.id)
-    const policy = access.groups[groupId]
+    const policy = access.groups[groupId] ?? access.groups['*']
     if (!policy) return { action: 'drop' }
     const groupAllowFrom = policy.allowFrom ?? []
     const requireMention = policy.requireMention ?? true
