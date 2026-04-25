@@ -754,7 +754,11 @@ bot.command('start', async ctx => {
 })
 
 bot.command('help', async ctx => {
-  if (!dmCommandGate(ctx)) return
+  const gated = dmCommandGate(ctx)
+  if (!gated) return
+  // Allowlist-only: even pairing-mode users don't get help text — prevents
+  // bot enumeration. Pair first, then commands work.
+  if (!gated.access.allowFrom.includes(gated.senderId)) return
   await ctx.reply(
     `Messages you send here route to a paired Claude Code session. ` +
     `Text and photos are forwarded; replies and reactions come back.\n\n` +
@@ -768,22 +772,12 @@ bot.command('status', async ctx => {
   if (!gated) return
   const { access, senderId } = gated
 
-  if (access.allowFrom.includes(senderId)) {
-    const name = ctx.from!.username ? `@${ctx.from!.username}` : senderId
-    await ctx.reply(`Paired as ${name}.`)
-    return
-  }
+  // Allowlist-only: don't leak pending pairing codes from other users, and
+  // don't confirm the bot's existence to non-allowlisted accounts.
+  if (!access.allowFrom.includes(senderId)) return
 
-  for (const [code, p] of Object.entries(access.pending)) {
-    if (p.senderId === senderId) {
-      await ctx.reply(
-        `Pending pairing — run in Claude Code:\n\n/telegram:access pair ${code}`
-      )
-      return
-    }
-  }
-
-  await ctx.reply(`Not paired. Send me a message to get a pairing code.`)
+  const name = ctx.from!.username ? `@${ctx.from!.username}` : senderId
+  await ctx.reply(`Paired as ${name}.`)
 })
 
 // Inline-button handler for permission requests. Callback data is
