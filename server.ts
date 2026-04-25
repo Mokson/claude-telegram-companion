@@ -636,7 +636,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: 'reply',
       description:
-        'Reply on Telegram. Pass chat_id from the inbound message. Optionally pass reply_to (message_id) for threading, and files (absolute paths) to attach images or documents.',
+        'Reply on Telegram. Pass chat_id from the inbound message. Optionally pass reply_to (message_id) for threading, files (absolute paths) for images, voice notes (.ogg/.opus/.oga), or documents, and message_thread_id for forum-supergroup topics.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -645,6 +645,10 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           reply_to: {
             type: 'string',
             description: 'Message ID to thread under. Use message_id from the inbound <channel> block.',
+          },
+          message_thread_id: {
+            type: 'string',
+            description: 'Forum supergroup topic ID. Pass through the message_thread_id from the inbound <channel> block so the reply lands in the same topic. Omit for regular groups, DMs, or replies to the General topic.',
           },
           files: {
             type: 'array',
@@ -712,6 +716,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
       case 'reply': {
         const chat_id = args.chat_id as string
         const reply_to = args.reply_to != null ? Number(args.reply_to) : undefined
+        const message_thread_id = args.message_thread_id != null ? Number(args.message_thread_id) : undefined
         const files = (args.files as string[] | undefined) ?? []
         const format = (args.format as string | undefined) ?? 'text'
         const parseMode = (format === 'markdownv2' || format === 'markdown') ? 'MarkdownV2' as const : undefined
@@ -746,6 +751,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
             try {
               sent = await bot.api.sendMessage(chat_id, chunks[i], {
                 ...(shouldReplyTo ? { reply_parameters: { message_id: reply_to } } : {}),
+                ...(message_thread_id != null ? { message_thread_id } : {}),
                 ...(parseMode ? { parse_mode: parseMode } : {}),
               })
             } catch (parseErr: any) {
@@ -756,6 +762,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
                 process.stderr.write(`telegram channel: ${parseMode} failed, retrying as plain text\n`)
                 sent = await bot.api.sendMessage(chat_id, chunks[i], {
                   ...(shouldReplyTo ? { reply_parameters: { message_id: reply_to } } : {}),
+                  ...(message_thread_id != null ? { message_thread_id } : {}),
                 })
               } else {
                 throw parseErr
@@ -775,9 +782,12 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         for (const f of files) {
           const ext = extname(f).toLowerCase()
           const input = new InputFile(f)
-          const opts = reply_to != null && replyMode !== 'off'
-            ? { reply_parameters: { message_id: reply_to } }
-            : undefined
+          const opts = {
+            ...(reply_to != null && replyMode !== 'off'
+              ? { reply_parameters: { message_id: reply_to } }
+              : {}),
+            ...(message_thread_id != null ? { message_thread_id } : {}),
+          }
           if (PHOTO_EXTS.has(ext)) {
             const sent = await bot.api.sendPhoto(chat_id, input, opts)
             sentIds.push(sent.message_id)
@@ -1311,6 +1321,8 @@ async function handleInbound(
   const chat_id = String(ctx.chat!.id)
   const msg = ctx.message ?? ctx.channelPost
   const msgId = msg?.message_id
+  // Forum supergroup topic id, present only when the message was posted in a topic
+  const messageThreadId = ctx.message?.message_thread_id
 
   // Permission-reply intercept: if this looks like "yes xxxxx" for a
   // pending permission request, emit the structured event instead of
@@ -1367,6 +1379,7 @@ async function handleInbound(
     meta: {
       chat_id,
       ...(msgId != null ? { message_id: String(msgId) } : {}),
+      ...(messageThreadId != null ? { message_thread_id: String(messageThreadId) } : {}),
       user: from?.username ?? (from ? String(from.id) : `channel:${chat_id}`),
       ...(from ? { user_id: String(from.id) } : {}),
       ts: new Date((msg?.date ?? 0) * 1000).toISOString(),
