@@ -1591,18 +1591,14 @@ if (isPollingLeader) void (async () => {
           attempt = 0
           botUsername = info.username
           process.stderr.write(`telegram channel: polling as @${info.username}\n`)
-          // Register commands in Telegram's "/" autocomplete menu. Bot-level
-          // commands (start/help/status) are handled locally. Claude Code
-          // skills are relayed as plain text — Claude recognizes the /slash
-          // syntax and executes them. Companion's sync hook overrides this
-          // with dynamic per-chat skill discovery at SessionStart.
+          // Register bot-level commands in Telegram's "/" autocomplete menu.
+          // Companion's sync hook overrides this with dynamic per-chat skill
+          // discovery at SessionStart.
           void bot.api.setMyCommands(
             [
               { command: 'start', description: 'Welcome and setup guide' },
               { command: 'help', description: 'What this bot can do' },
               { command: 'status', description: 'Check your pairing status' },
-              { command: 'commit', description: 'Create a git commit' },
-              { command: 'review', description: 'Run code reviews' },
             ],
             { scope: { type: 'all_private_chats' } },
           ).catch(() => {})
