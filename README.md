@@ -1,64 +1,70 @@
 # claude-telegram-companion
 
-Drop-in companion for the official Telegram plugin. Adds live progress tracking, persistent typing, error forwarding, command menus, MarkdownV2 formatting, and voice transcription.
+Standalone Telegram channel for [Claude Code](https://claude.com/code). Self-hosted MCP server with built-in access control, live progress tracking, and reliability hardening.
 
 <img src="assets/progress.gif" width="320" alt="Live progress tracking" />
-<img src="assets/commands.png" width="320" alt="Telegram command menu" />
 
-| Without | With |
-| --- | --- |
-| Typing vanishes after 5 seconds | Typing persists for up to 5 minutes |
-| No visibility into multi-step work | Live step-by-step progress in chat |
-| Tool errors lost in terminal | Errors forwarded to Telegram |
-| No `/` command menu | Skills auto-synced to BotFather |
-| Voice messages ignored | Voice transcribed locally via whisper.cpp |
+## Features
 
-## Quick start
+- Self-hosted MCP server (no dependency on `telegram@claude-plugins-official`)
+- Pairing-based access control with allowlists, group, and channel policies
+- Atomic poll lock with follower mode for multi-session setups
+- Persistent inbound queue with replay on restart
+- Auto-escaping markdown via `format: "markdown"`
+- Inline keyboards, reply-to context, forum supergroup topics, channel posts
+- Voice notes (`.ogg`/`.opus`/`.oga`) routed via `sendVoice`
+- Live progress UX: per-chat command menus, typing keepalive, tool checklists
+- MarkdownV2 reference skill for manual formatting
 
-Requires the official `telegram` plugin to be enabled.
+## Install
 
-```
+```bash
 /plugin marketplace add Mokson/claude-telegram-companion
 /plugin install claude-telegram-companion@claude-telegram-companion
 ```
 
-Restart Claude Code. Everything works out of the box.
-
-## What it does
-
-The plugin runs entirely through hooks. No MCP server, no background processes at rest.
-
-**On session start**, it injects behavioral instructions (call `react` first, use MarkdownV2, handle voice messages) and syncs your installed skills to the Telegram `/` command menu using per-chat scope so the official plugin can't overwrite them.
-
-**On every tool call**, it tracks progress. When Claude reacts to an incoming message, the hook establishes context. On the first real tool call, it sends a progress message and spawns a typing daemon. Each subsequent tool completion updates the message with a live checklist. When Claude replies, the progress message is deleted.
-
-**On tool failure**, if no reply has been sent yet, the error is forwarded directly to Telegram so the user isn't left waiting in silence.
-
-## Voice transcription
-
-Transcribes voice and audio messages locally using whisper.cpp. Optional.
+Disable the official plugin if previously enabled:
 
 ```bash
-brew install whisper-cpp ffmpeg
-mkdir -p ~/.local/share/whisper.cpp/models
-curl -L -o ~/.local/share/whisper.cpp/models/ggml-base.en.bin \
-  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
+/config
+# set telegram@claude-plugins-official to disabled
 ```
 
-Without these tools installed, Claude asks the sender to type instead.
+## Setup
+
+Create a bot via [@BotFather](https://t.me/BotFather) and store its token:
+
+```bash
+mkdir -p ~/.claude/channels/telegram
+echo 'TELEGRAM_BOT_TOKEN=123456:AAH...' > ~/.claude/channels/telegram/.env
+chmod 600 ~/.claude/channels/telegram/.env
+```
+
+Pair your Telegram account:
+
+1. DM the bot — you receive a 6-character code.
+2. In Claude Code, run `/claude-telegram-companion:access pair <code>`.
+3. Send a message. Claude replies.
 
 ## Configuration
 
-Everything works without configuration. Optionally create `~/.claude/channels/telegram/command-config.json` to customize the command menu (see `config/command-config.example.json` for the schema):
+State lives in `~/.claude/channels/telegram/access.json`. Manage via the `access` skill:
 
-| Key | Default | Purpose |
-| --- | --- | --- |
-| `progress.statusUpdates` | `true` | Show live progress during work |
-| `commands.exclude.plugins` | `[]` | Hide entire plugins from the menu |
-| `commands.exclude.skills` | `[]` | Hide individual skills |
-| `commands.aliases` | `{}` | Map skills to custom `/command` names |
-| `commands.extra` | `[]` | Add static commands not tied to a skill |
+| Command | Purpose |
+| --- | --- |
+| `/claude-telegram-companion:access pair <code>` | Approve a pending pairing |
+| `/claude-telegram-companion:access add <user-id>` | Add a user to the allowlist |
+| `/claude-telegram-companion:access group add <chat-id>` | Enable a group |
+| `/claude-telegram-companion:access set ackReaction 👀` | Set ack reaction emoji |
+
+Optional environment variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `TELEGRAM_STATE_DIR` | Override `~/.claude/channels/telegram/` |
+| `TELEGRAM_PLUGIN_HEARTBEAT` | Path to write a unix-timestamp heartbeat for external watchdogs |
+| `TELEGRAM_ACCESS_MODE=static` | Snapshot access at boot (no runtime mutation) |
 
 ## License
 
-MIT
+Apache-2.0 (MCP server) / MIT (skills, hooks, scripts).

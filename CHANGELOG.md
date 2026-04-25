@@ -1,0 +1,54 @@
+# Changelog
+
+## v2.0.0
+
+Decoupled fork. The plugin now hosts its own Telegram MCP server and no longer depends on `telegram@claude-plugins-official`.
+
+### Breaking
+
+- Skill namespace: `/telegram:access` → `/claude-telegram-companion:access`. Same for `/telegram:configure`.
+- Voice transcription via `transcribe` skill removed. Voice messages now flow through the embedded server's `attachment_kind: voice` meta. Re-enable with a `TELEGRAM_VOICE_CMD` env var if needed.
+- Disable `telegram@claude-plugins-official` to avoid two pollers competing for the bot token.
+
+### Added (cherry-picked PRs from anthropics/claude-plugins-official)
+
+| PR | Summary |
+| --- | --- |
+| #976 | Retry polling on transient network errors; fail fast on permanent (e.g. invalid token) |
+| #1515 | Optional poll-loop heartbeat file (`TELEGRAM_PLUGIN_HEARTBEAT`) |
+| #1374 | Atomic poll lock with follower mode for multi-session setups |
+| #980 | Photo download hardening: empty-array guard, HTTP status check, size limit |
+| #1322 | Persist inbound messages before notifying Claude; replay on restart |
+| #1560 | 15s retry tick for pending notifications between sessions |
+| #978 | Allowlist enforcement on `/start`, `/help`, `/status` |
+| #1217 | `permissionApprovers` config to scope permission relays |
+| #1570 | Plain-text fallback when MarkdownV2/HTML parse fails |
+| #1410 | `format: "markdown"` with GFM auto-escape |
+| #1285 | Reply-to message context in inbound meta |
+| #1504 | `.ogg`/`.opus`/`.oga` routed as voice notes |
+| #1003 | `channel_post` support for bot-to-bot communication |
+| #1325 | Forum-supergroup topic round-trip via `message_thread_id` |
+| #1491 | Inline keyboard buttons on `reply` tool with callback round-trip |
+| #1179 | Wildcard `'*'` group policy |
+| #1239 | Default Claude Code skills in bot command menu |
+
+### Stability patches
+
+- `process.stdout` error listener (prevents broken-pipe crashes)
+- `mcp.onerror` handler (catches transport-level errors)
+- `.catch()` on fire-and-forget `mcp.notification()` calls
+
+### Companion changes
+
+- New `skills/access/` and `skills/configure/` ported from upstream and namespaced
+- Hook scripts updated to recognize `mcp__plugin_claude-telegram-companion_telegram__*` tool names
+
+### Deferred to v2.1.0
+
+- In-server `ProgressTracker` (currently still daemon-based)
+- Skill discovery engine moved into MCP server
+- `MCP instructions` field replacing SessionStart stdout injection
+
+## v1.x
+
+See git log on `main` for v1.0.0 → v1.1.0 history.

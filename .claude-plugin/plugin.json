@@ -1,7 +1,7 @@
 {
   "name": "claude-telegram-companion",
-  "description": "Companion enhancements for the official Telegram plugin: MarkdownV2 formatting, progress indicators, typing keepalive, error forwarding, command sync.",
-  "version": "1.0.0",
+  "description": "Standalone Telegram channel for Claude Code. Self-hosted MCP server with access control, progress UX, and reliability hardening.",
+  "version": "2.0.0",
   "author": {
     "name": "Mokson",
     "url": "https://github.com/Mokson"
@@ -10,9 +10,9 @@
   "license": "MIT",
   "keywords": [
     "telegram",
+    "mcp",
+    "channel",
     "progress",
-    "formatting",
-    "companion",
-    "channel"
+    "messaging"
   ]
 }
