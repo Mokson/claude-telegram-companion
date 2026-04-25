@@ -636,7 +636,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: 'reply',
       description:
-        'Reply on Telegram. Pass chat_id from the inbound message. Optionally pass reply_to (message_id) for threading, files (absolute paths) for images, voice notes (.ogg/.opus/.oga), or documents, and message_thread_id for forum-supergroup topics.',
+        'Reply on Telegram. Pass chat_id from the inbound message. Optionally pass reply_to (message_id) for threading, files (absolute paths) for images, voice notes (.ogg/.opus/.oga), or documents, message_thread_id for forum-supergroup topics, and buttons ([{text, data}]) to attach an inline keyboard. Tapping a button posts its data back as a new inbound message with meta.click_source="button".',
       inputSchema: {
         type: 'object',
         properties: {
@@ -659,6 +659,18 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: 'string',
             enum: ['text', 'markdown', 'markdownv2'],
             description: "Rendering mode. 'markdown' (recommended) accepts GitHub-flavored markdown and is auto-converted to Telegram MarkdownV2 with correct escaping. 'markdownv2' is raw MarkdownV2 (caller escapes). Default: 'text' (plain, no escaping).",
+          },
+          buttons: {
+            type: 'array',
+            description: 'Inline keyboard attached to the last outbound chunk, one button per row. When the user taps, `data` arrives as a new inbound channel message (meta.click_source="button", meta.click_label=<text>) and the keyboard is removed so it cannot be tapped twice.',
+            items: {
+              type: 'object',
+              properties: {
+                text: { type: 'string', description: 'Label shown on the button (~30 chars recommended).' },
+                data: { type: 'string', description: 'Payload delivered back on tap. Max 60 bytes UTF-8.' },
+              },
+              required: ['text', 'data'],
+            },
           },
         },
         required: ['chat_id', 'text'],
@@ -718,6 +730,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         const reply_to = args.reply_to != null ? Number(args.reply_to) : undefined
         const message_thread_id = args.message_thread_id != null ? Number(args.message_thread_id) : undefined
         const files = (args.files as string[] | undefined) ?? []
+        const rawButtons = args.buttons as Array<{ text: unknown; data: unknown }> | undefined
         const format = (args.format as string | undefined) ?? 'text'
         const parseMode = (format === 'markdownv2' || format === 'markdown') ? 'MarkdownV2' as const : undefined
         const text = format === 'markdown'
@@ -734,12 +747,35 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
           }
         }
 
+        // Build inline keyboard from buttons, one per row. callback_data is
+        // namespaced with `usr:` so the callback handler can tell custom
+        // buttons apart from the built-in permission-reply keyboard.
+        let keyboard: InlineKeyboard | undefined
+        if (Array.isArray(rawButtons) && rawButtons.length > 0) {
+          const kb = new InlineKeyboard()
+          for (const b of rawButtons) {
+            if (typeof b?.text !== 'string' || typeof b?.data !== 'string') {
+              throw new Error('each button must have string text and data')
+            }
+            if (!b.text.length) throw new Error('button text must be non-empty')
+            const encoded = `usr:${b.data}`
+            if (Buffer.byteLength(encoded, 'utf8') > 64) {
+              throw new Error(`button data too long: ${b.data} (max 60 bytes UTF-8)`)
+            }
+            kb.text(b.text, encoded).row()
+          }
+          keyboard = kb
+        }
+
         const access = loadAccess()
         const limit = Math.max(1, Math.min(access.textChunkLimit ?? MAX_CHUNK_LIMIT, MAX_CHUNK_LIMIT))
         const mode = access.chunkMode ?? 'length'
         const replyMode = access.replyToMode ?? 'first'
         const chunks = chunk(text, limit, mode)
         const sentIds: number[] = []
+        // Keyboard attaches to the last visible message: last file if any,
+        // otherwise last text chunk.
+        const keyboardOnTextIndex = files.length === 0 ? chunks.length - 1 : -1
 
         try {
           for (let i = 0; i < chunks.length; i++) {
@@ -753,6 +789,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
                 ...(shouldReplyTo ? { reply_parameters: { message_id: reply_to } } : {}),
                 ...(message_thread_id != null ? { message_thread_id } : {}),
                 ...(parseMode ? { parse_mode: parseMode } : {}),
+                ...(keyboard && i === keyboardOnTextIndex ? { reply_markup: keyboard } : {}),
               })
             } catch (parseErr: any) {
               // MarkdownV2/HTML have strict escape requirements; Telegram returns
@@ -778,15 +815,20 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         }
 
         // Files go as separate messages (Telegram doesn't mix text+file in one
-        // sendMessage call). Thread under reply_to if present.
-        for (const f of files) {
+        // sendMessage call). Thread under reply_to if present. If buttons were
+        // provided, the keyboard rides the last file so it sits under the last
+        // visible message.
+        for (let fi = 0; fi < files.length; fi++) {
+          const f = files[fi]
           const ext = extname(f).toLowerCase()
           const input = new InputFile(f)
+          const isLastFile = fi === files.length - 1
           const opts = {
             ...(reply_to != null && replyMode !== 'off'
               ? { reply_parameters: { message_id: reply_to } }
               : {}),
             ...(message_thread_id != null ? { message_thread_id } : {}),
+            ...(keyboard && isLastFile ? { reply_markup: keyboard } : {}),
           }
           if (PHOTO_EXTS.has(ext)) {
             const sent = await bot.api.sendPhoto(chat_id, input, opts)
@@ -951,11 +993,69 @@ bot.command('status', async ctx => {
   await ctx.reply(`Paired as ${name}.`)
 })
 
-// Inline-button handler for permission requests. Callback data is
-// `perm:allow:<id>`, `perm:deny:<id>`, or `perm:more:<id>`.
-// Security mirrors the text-reply path: allowFrom must contain the sender.
+// Inline-button handler. Routes:
+//  - `perm:{allow,deny,more}:<id>` — built-in permission-reply keyboard
+//  - `usr:<payload>`               — custom buttons attached via reply(buttons)
+// Security mirrors the text-reply path: sender must pass the inbound gate.
 bot.on('callback_query:data', async ctx => {
   const data = ctx.callbackQuery.data
+
+  if (data.startsWith('usr:')) {
+    const access = loadAccess()
+    const senderId = String(ctx.from.id)
+    const chatType = ctx.chat?.type
+    const chatId = ctx.chat ? String(ctx.chat.id) : ''
+    let authorized = false
+    if (chatType === 'private') {
+      authorized = access.allowFrom.includes(senderId)
+    } else if (chatType === 'group' || chatType === 'supergroup') {
+      const policy = access.groups[chatId]
+      if (policy) {
+        const ga = policy.allowFrom ?? []
+        authorized = ga.length === 0 || ga.includes(senderId)
+      }
+    }
+    if (!authorized) {
+      await ctx.answerCallbackQuery({ text: 'Not authorized.' }).catch(() => {})
+      return
+    }
+
+    const payload = data.slice(4)
+    const msg = ctx.callbackQuery.message
+    let clickedLabel = payload
+    const rm = msg && 'reply_markup' in msg
+      ? (msg.reply_markup as { inline_keyboard?: Array<Array<{ text: string; callback_data?: string }>> } | undefined)
+      : undefined
+    if (rm?.inline_keyboard) {
+      for (const row of rm.inline_keyboard) {
+        for (const b of row) {
+          if (b.callback_data === data) { clickedLabel = b.text; break }
+        }
+      }
+    }
+    await ctx.editMessageReplyMarkup({}).catch(() => {})
+    await ctx.answerCallbackQuery({ text: `✓ ${clickedLabel}` }).catch(() => {})
+
+    void mcp.notification({
+      method: 'notifications/claude/channel',
+      params: {
+        content: payload,
+        meta: {
+          chat_id: chatId,
+          ...(msg?.message_id != null ? { message_id: String(msg.message_id) } : {}),
+          user: ctx.from.username ?? senderId,
+          user_id: senderId,
+          ts: new Date().toISOString(),
+          click_source: 'button',
+          click_label: clickedLabel,
+        },
+      },
+    }).catch(err => {
+      process.stderr.write(`telegram channel: button-click notification failed: ${err}\n`)
+    })
+    return
+  }
+
   const m = /^perm:(allow|deny|more):([a-km-z]{5})$/.exec(data)
   if (!m) {
     await ctx.answerCallbackQuery().catch(() => {})
