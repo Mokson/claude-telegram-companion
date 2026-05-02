@@ -642,7 +642,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: 'reply',
       description:
-        'Reply on Telegram. Pass chat_id from the inbound message. Optionally pass reply_to (message_id) for threading, files (absolute paths) for images, voice notes (.ogg/.opus/.oga), or documents, message_thread_id for forum-supergroup topics, and buttons ([{text, data}]) to attach an inline keyboard. Tapping a button posts its data back as a new inbound message with meta.click_source="button".',
+        'Reply on Telegram. Pass chat_id from the inbound message. Optionally pass reply_to (message_id) for threading, files (absolute paths) for images, voice notes (.ogg/.opus/.oga), or documents, message_thread_id for forum-supergroup topics, and buttons ([{text, data}]) to attach an inline keyboard. Tapping a button posts its data back as a new inbound message with meta.click_source="button". Use quote to highlight a specific substring from the replied-to message (requires reply_to).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -651,6 +651,10 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           reply_to: {
             type: 'string',
             description: 'Message ID to thread under. Use message_id from the inbound <channel> block.',
+          },
+          quote: {
+            type: 'string',
+            description: 'Exact substring from the replied-to message to highlight as a native Telegram quote. Requires reply_to. The text must appear verbatim in the original message.',
           },
           message_thread_id: {
             type: 'string',
@@ -734,6 +738,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
       case 'reply': {
         const chat_id = args.chat_id as string
         const reply_to = args.reply_to != null ? Number(args.reply_to) : undefined
+        const quote = reply_to != null && typeof args.quote === 'string' ? args.quote : undefined
         const message_thread_id = args.message_thread_id != null ? Number(args.message_thread_id) : undefined
         const files = (args.files as string[] | undefined) ?? []
         const rawButtons = args.buttons as Array<{ text: unknown; data: unknown }> | undefined
@@ -791,8 +796,11 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
               (replyMode === 'all' || i === 0)
             let sent
             try {
+              const replyParams = shouldReplyTo
+                ? { reply_parameters: { message_id: reply_to, ...(quote && i === 0 ? { quote } : {}) } }
+                : {}
               sent = await bot.api.sendMessage(chat_id, chunks[i], {
-                ...(shouldReplyTo ? { reply_parameters: { message_id: reply_to } } : {}),
+                ...replyParams,
                 ...(message_thread_id != null ? { message_thread_id } : {}),
                 ...(parseMode ? { parse_mode: parseMode } : {}),
                 ...(keyboard && i === keyboardOnTextIndex ? { reply_markup: keyboard } : {}),
@@ -803,8 +811,11 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
               // always gets through rather than being silently dropped.
               if (parseMode && parseErr?.error_code === 400) {
                 process.stderr.write(`telegram channel: ${parseMode} failed, retrying as plain text\n`)
+                const fallbackReplyParams = shouldReplyTo
+                  ? { reply_parameters: { message_id: reply_to, ...(quote && i === 0 ? { quote } : {}) } }
+                  : {}
                 sent = await bot.api.sendMessage(chat_id, chunks[i], {
-                  ...(shouldReplyTo ? { reply_parameters: { message_id: reply_to } } : {}),
+                  ...fallbackReplyParams,
                   ...(message_thread_id != null ? { message_thread_id } : {}),
                 })
               } else {
