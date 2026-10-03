@@ -11,10 +11,19 @@ const PID_FILE = path.join(tmpDir, 'telegram-typing-pid');
 const STOP_FILE = path.join(tmpDir, 'telegram-typing-stop');
 const CURRENT_TOOL_FILE = path.join(tmpDir, 'telegram-current-tool.txt');
 const ACTIVE_FILE = path.join(tmpDir, 'telegram-active.json');
-const ENV_FILE = path.join(os.homedir(), '.claude', 'channels', 'telegram', '.env');
+// Same resolution as server.ts: TELEGRAM_STATE_DIR, else the Claude config
+// dir (CLAUDE_CONFIG_DIR or ~/.claude) + channels/telegram.
+const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+const STATE_DIR = process.env.TELEGRAM_STATE_DIR || path.join(CLAUDE_DIR, 'channels', 'telegram');
+const ENV_FILE = path.join(STATE_DIR, '.env');
 
 const MAX_VISIBLE_STEPS = 15;
 const MAX_FINAL_STEPS = 100;
+
+// Stop button on the live progress message; server.ts handles `ctl:stop`.
+// Every live edit must resend it (editMessageText without reply_markup drops
+// the keyboard); the final collapse omits it on purpose.
+const STOP_MARKUP = { inline_keyboard: [[{ text: '⏹ Stop', callback_data: 'ctl:stop' }]] };
 
 function readToken() {
   try {
@@ -88,7 +97,11 @@ function formatProgress(entries, currentTool) {
   return '<blockquote>' + lines.join('\n') + '</blockquote>';
 }
 
-// Live progress as quoted markdown (draft streaming mode).
+// Live progress for rich drafts (draft streaming mode): completed steps as a
+// blockquote, then the native animated "thinking" block (Bot API 10.2, drafts
+// only) for the in-flight tool, or plain "Thinking…" between tools. Built
+// from HTML blocks because markdown quote lines would soft-wrap into one line
+// and markdown isn't parsed inside block tags anyway.
 function formatProgressMarkdown(entries, currentTool) {
   if (entries.length === 0 && !currentTool) return null;
   const visible = entries.length > MAX_VISIBLE_STEPS
@@ -97,30 +110,32 @@ function formatProgressMarkdown(entries, currentTool) {
     ? entries.length - MAX_VISIBLE_STEPS : 0;
   const doneLabels = new Set(entries.map(e => e.label));
   const lines = [];
-  if (truncated > 0) lines.push(`*... ${truncated} earlier steps*`);
+  if (truncated > 0) lines.push(`<i>... ${truncated} earlier steps</i>`);
   for (const entry of visible) {
-    lines.push(`✓ ${(entry.label || 'Working').slice(0, 80)}${countSuffix(entry)}`);
+    lines.push(`✓ ${escapeHtml((entry.label || 'Working').slice(0, 80))}${countSuffix(entry)}`);
   }
-  if (currentTool && !doneLabels.has(currentTool)) {
-    lines.push(`▸ **${currentTool.slice(0, 80)}**…`);
-  }
-  return lines.map(l => '> ' + l).join('\n');
+  const inFlight = currentTool && !doneLabels.has(currentTool)
+    ? `${escapeHtml(currentTool.slice(0, 80))}…` : 'Thinking…';
+  const quote = lines.length > 0 ? `<blockquote>${lines.join('<br>')}</blockquote>\n\n` : '';
+  return `${quote}<tg-thinking>${inFlight}</tg-thinking>`;
 }
 
 // Final collapsed history: an expandable blockquote so the tool-call history
-// persists in chat without dominating it.
-function formatProgressFinalHtml(entries, elapsedSec) {
+// persists in chat without dominating it. `stopped` marks a turn the user
+// interrupted with the Stop button.
+function formatProgressFinalHtml(entries, elapsedSec, stopped = false) {
   if (entries.length === 0) return null;
   const steps = stepCount(entries);
   const dur = formatDuration(elapsedSec);
-  const head = `Ran ${steps} step${steps === 1 ? '' : 's'}${dur ? ` · ${dur}` : ''}`;
+  const verb = stopped ? '⏹ Stopped after' : 'Ran';
+  const head = `${verb} ${steps} step${steps === 1 ? '' : 's'}${dur ? ` · ${dur}` : ''}`;
   const lines = entries.slice(-MAX_FINAL_STEPS)
     .map(e => `✓ ${escapeHtml((e.label || 'Working').slice(0, 80))}${countSuffix(e)}`);
   return `<blockquote expandable>${head}\n${lines.join('\n')}</blockquote>`;
 }
 
 module.exports = {
-  LOG_FILE, PID_FILE, STOP_FILE, CURRENT_TOOL_FILE, ACTIVE_FILE,
+  LOG_FILE, PID_FILE, STOP_FILE, CURRENT_TOOL_FILE, ACTIVE_FILE, STATE_DIR, STOP_MARKUP,
   readToken, escapeHtml,
   readProgressLog, writeProgressLog, readCurrentTool,
   formatProgress, formatProgressMarkdown, formatProgressFinalHtml,
