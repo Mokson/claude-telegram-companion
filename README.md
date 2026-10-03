@@ -10,12 +10,12 @@ Standalone Telegram channel for [Claude Code](https://claude.com/code). Self-hos
 - Pairing-based access control with allowlists, group, and channel policies
 - Atomic poll lock with follower mode for multi-session setups
 - Persistent inbound queue with replay on restart
-- Auto-escaping markdown via `format: "markdown"` — bold, italic, strike, code, links, spoilers, blockquotes (incl. expandable via `>!`), and custom emoji
+- Rich messages via `format: "markdown"` (Bot API 10.1+, 32K): headers, lists, compact tables, `<details>`, expandable quotes via `>!`, spoilers, custom emoji; MarkdownV2 fallback with automatic escaping
+- Files embedded in the reply's rich message (photos/videos as a collage, documents and audio as media blocks); separate messages on the fallback path
 - Inbound formatting preserved: user spoilers, quotes, code, and links are reconstructed from Telegram entities before reaching Claude
-- Inline keyboards (with optional Bot API 9.4 background colors / custom emoji), reply-to context, forum supergroup topics, channel posts
-- Voice notes (`.ogg`/`.opus`/`.oga`) routed via `sendVoice`
-- Live progress UX: persistent tool-call tracker edited in place (quiet blockquote, silent send) that collapses into an expandable summary when the turn ends; optional legacy draft streaming (`sendMessageDraft`); per-chat command menus; typing keepalive
-- MarkdownV2 reference skill for manual formatting
+- Inline keyboards (Bot API 9.4 styles / custom emoji) that stay visible, disabled, with the answer marked ✓ after a tap; reply-to context, forum supergroup topics, channel posts
+- Live progress UX: persistent tool-call tracker edited in place (quiet blockquote, silent send) that collapses into an expandable summary when the turn ends; optional draft streaming with a native thinking block; per-chat command menus; typing keepalive
+- `⏹ Stop` button on the progress message (and native Stop on drafts) interrupts the running Claude turn — requires the session to run in tmux
 
 ## Install
 
@@ -54,7 +54,7 @@ State lives in `~/.claude/channels/telegram/access.json`. Manage via the `access
 | Command | Purpose |
 | --- | --- |
 | `/claude-telegram-companion:access pair <code>` | Approve a pending pairing |
-| `/claude-telegram-companion:access add <user-id>` | Add a user to the allowlist |
+| `/claude-telegram-companion:access allow <user-id>` | Add a user to the allowlist |
 | `/claude-telegram-companion:access group add <chat-id>` | Enable a group |
 | `/claude-telegram-companion:access set ackReaction 👀` | Set ack reaction emoji |
 
@@ -62,7 +62,7 @@ Optional environment variables:
 
 | Variable | Purpose |
 | --- | --- |
-| `TELEGRAM_STATE_DIR` | Override `~/.claude/channels/telegram/` |
+| `TELEGRAM_STATE_DIR` | Override the state dir (default `$CLAUDE_CONFIG_DIR/channels/telegram/`, else `~/.claude/channels/telegram/`) |
 | `TELEGRAM_PLUGIN_HEARTBEAT` | Path to write a unix-timestamp heartbeat for external watchdogs |
 | `TELEGRAM_ACCESS_MODE=static` | Snapshot access at boot (no runtime mutation) |
 

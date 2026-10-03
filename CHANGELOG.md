@@ -1,5 +1,32 @@
 # Changelog
 
+## v2.7.0
+
+Bot API 10.2/10.3 features (Stop button, embedded media, compact tables, disabled buttons, thinking drafts) and the upstream v0.0.7 reliability fixes.
+
+### Added
+
+- **Stop a running turn from Telegram**: the live progress message carries a `⏹ Stop` button; draft-mode progress uses the native draft Stop button (Bot API 10.3 `can_stop` + `stopped_message_generation`). Either sends Escape to the owning session's tmux pane (recorded by the hooks when they claim the turn) and collapses the trace as `⏹ Stopped after N steps`. Outside tmux the user gets "Can't stop".
+- **Files embedded in rich replies** (Bot API 10.2/10.3): with `format: "markdown"`, `reply` files ride inside the same rich message as `f1…fN` via `InputRichMessageMedia` (multipart upload) — 2+ photos/videos become one `<tg-collage>`, other files follow as media blocks, and `![caption](tg://photo?id=f1)` places one inline (the scheme is corrected per file type). Falls back to separate messages if the embed is rejected. Replaces the `curl sendMediaGroup` workaround in the MCP instructions.
+- **Compact tables** (Bot API 10.3): GFM tables on the rich path are rewritten to `<table compact>` with column alignment, so more fits on a phone.
+- **Expandable quotes on the rich path**: `>!` quotes now render as `<blockquote expandable>` in rich messages and rich edits too (previously only the MarkdownV2 fallback understood them).
+- **Answered keyboards stay visible** (Bot API 10.3 disabled buttons): tapping a `reply` button disables the whole keyboard and marks the chosen button `✓` instead of removing it; servers without disabled buttons still get the keyboard removed.
+- **Thinking block in draft progress** (Bot API 10.2): rich drafts show completed steps as a blockquote and the in-flight tool in the native animated `<tg-thinking>` block (`Thinking…` between tools).
+
+### Changed
+
+- **State dir**: server, hooks and both skills resolve `TELEGRAM_STATE_DIR`, then `$CLAUDE_CONFIG_DIR/channels/telegram`, then `~/.claude/channels/telegram`. The skills previously hardcoded the default path, so a custom state dir silently ignored pairing and allowlist edits (upstream #1424).
+- **Embedded prompts**: MCP instructions and tool descriptions cover Stop, embedded media, compact tables, `>!` on both paths and disabled keyboards; skills use the plugin's real `/claude-telegram-companion:*` command names and `access set` documents `permissionApprovers`; `/help` mentions Stop.
+
+### Fixed
+
+- **Self-termination ~5s after launch**: the orphan watchdog's `ppid` check misfired when the `bun run` wrapper exited during startup. Stdin closing is the only shutdown signal now (upstream #1424).
+- **MCP handshake corrupted by `bun install` output**: the start script sends install output to stderr instead of the JSON-RPC stdout (upstream #1424).
+- **PID reuse in the poll lock**: a recycled PID no longer passes as a live leader; the holder must still be a `server.ts` process (`ps -o args=`), else followers would wait forever and nothing would poll.
+- **In-flight-only trace**: if the turn ends while the only step is still in flight, that step is folded into the final collapsed trace instead of deleting the progress message.
+- **Trace ownership**: only the session whose transcript contains the inbound `<channel chat_id=…>` block claims a turn, and a follow-up message mid-turn no longer resets the running trace.
+- **Draft progress layout**: completed steps render one per line (markdown quote lines used to soft-wrap into one).
+
 ## v2.6.0
 
 Persistent tool-call checklist, automatic progress (no `ack` round trip), rich edits, and hook fast-path fixes.

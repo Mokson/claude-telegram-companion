@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // PreToolUse/PostToolUse/Stop hook: Telegram progress indicators.
 //
-// Reads config from ~/.claude/channels/telegram/command-config.json:
+// Reads config from <state dir>/command-config.json (default
+// ~/.claude/channels/telegram/):
 //   progress.statusUpdates: bool (default: true) - show tool progress in Telegram
 //   progress.streamMode: "message" (default) | "draft"
 //     "message" - one persistent progress message, sent silently on the first
@@ -15,18 +16,20 @@
 //     "edit" (legacy value) is treated as "message".
 //
 // Modes (argv[2]):
-//   pre  - record in-flight tool label; establish context; begin progress;
-//          finalize draft history before reply/send executes
-//   post - append completed tools; manage daemon; finalize on reply/send
-//   stop - turn ended; finalize progress and clean up (same session only)
+//   pre       - record in-flight tool label; establish context; begin
+//               progress; finalize draft history before reply/send executes
+//   post      - append completed tools; manage daemon; finalize on reply/send
+//   stop      - turn ended; finalize progress and clean up (same session only)
+//   interrupt - spawned by server.ts when the user taps Stop (no stdin):
+//               finalize the trace as "Stopped" and clean up. Claude Code
+//               fires no Stop hook on an interrupted turn.
 
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const https = require('https');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const {
-  LOG_FILE, PID_FILE, STOP_FILE, CURRENT_TOOL_FILE, ACTIVE_FILE,
+  LOG_FILE, PID_FILE, STOP_FILE, CURRENT_TOOL_FILE, ACTIVE_FILE, STATE_DIR, STOP_MARKUP,
   readToken, escapeHtml,
   readProgressLog, writeProgressLog, readCurrentTool,
   formatProgress, formatProgressMarkdown, formatProgressFinalHtml,
@@ -44,7 +47,7 @@ function getTelegramAction(name) {
 }
 const DAEMON_SCRIPT = path.join(__dirname, 'telegram-typing-daemon.cjs');
 
-const CONFIG_FILE = path.join(os.homedir(), '.claude', 'channels', 'telegram', 'command-config.json');
+const CONFIG_FILE = path.join(STATE_DIR, 'command-config.json');
 
 // Lazy-loaded config (only read when Telegram context is active)
 let _statusUpdates = null;
@@ -97,6 +100,7 @@ function beginProgress(ctx, entries, currentTool) {
     text,
     parse_mode: 'HTML',
     disable_notification: true,
+    reply_markup: STOP_MARKUP,
   }, (msgId) => {
     if (msgId) {
       ctx.progress_msg_id = String(msgId);
@@ -109,33 +113,98 @@ function beginProgress(ctx, entries, currentTool) {
 }
 
 // Finalize the persistent progress message (collapse into an expandable
-// summary) and tear down all coordination state. Used on reply/send and on
-// Stop. Draft-mode history was already persisted in PreToolUse.
-function finalizeAndCleanup() {
+// summary) and tear down all coordination state. Used on reply/send, on
+// Stop, and on a user interrupt (`stopped`). Draft-mode history was already
+// persisted in PreToolUse — except on interrupt, where no reply comes and the
+// draft must be persisted here.
+function finalizeAndCleanup(stopped = false, retried = false) {
   const ctx = readActive();
   killDaemon();
-  const done = () => { cleanup(); process.exit(0); };
-  if (!ctx || !ctx.progress_msg_id || ctx.progress_msg_id === 'draft' || !getToken()) {
+  // Stop can land while the first progress message is still being sent; its
+  // id appears in the active file a moment later. Wait once for it, so that
+  // message gets collapsed instead of keeping a dead Stop button.
+  if (stopped && !retried && ctx && !ctx.progress_msg_id) {
+    setTimeout(() => finalizeAndCleanup(true, true), 2000);
+    return;
+  }
+  const done = () => {
+    cleanup();
+    if (!stopped) process.exit(0);
+    // A hook of the interrupted tool may still be in flight and rewrite the
+    // active file after this cleanup. Sweep once more, but only the
+    // interrupted turn's own state — a follow-up turn has a new started_at.
+    setTimeout(() => {
+      const late = readActive();
+      if (late && ctx && late.session_id === ctx.session_id && late.started_at === ctx.started_at) cleanup();
+      process.exit(0);
+    }, 1500);
+  };
+  if (!ctx || !ctx.progress_msg_id || !getToken()) {
+    done();
+    return;
+  }
+  const isDraft = ctx.progress_msg_id === 'draft';
+  if (isDraft && !stopped) {
     done();
     return;
   }
   const entries = readProgressLog();
   if (entries.length === 0) {
-    // Nothing completed: the message only ever showed an in-flight line.
-    // Delete it rather than leaving a stale stub in history.
-    telegramPostSync('deleteMessage', {
-      chat_id: ctx.chat_id,
-      message_id: Number(ctx.progress_msg_id),
+    // Nothing completed yet: the turn ended while the only step was still
+    // in flight. Fold that step into the trace so the log is never deleted.
+    const currentTool = readCurrentTool();
+    if (currentTool) {
+      entries.push({ label: currentTool, time: now(), status: 'done' });
+    } else {
+      // Nothing to show at all — leave the message as it stands.
+      done();
+      return;
+    }
+  }
+  const elapsed = now() - (ctx.started_at || ctx.timestamp || now());
+  const text = formatProgressFinalHtml(entries, elapsed, stopped);
+  // No reply_markup: the final collapse drops the Stop button.
+  if (isDraft) {
+    telegramPostSync('sendMessage', {
+      chat_id: ctx.chat_id, text, parse_mode: 'HTML', disable_notification: true,
     }, done);
     return;
   }
-  const elapsed = now() - (ctx.started_at || ctx.timestamp || now());
   telegramPostSync('editMessageText', {
     chat_id: ctx.chat_id,
     message_id: Number(ctx.progress_msg_id),
-    text: formatProgressFinalHtml(entries, elapsed),
+    text,
     parse_mode: 'HTML',
   }, done);
+}
+
+// The tmux pane of the Claude session running this hook, so server.ts can
+// interrupt the turn with Escape when the user taps Stop. TMUX_PANE when the
+// harness passes it through; otherwise walk our process ancestry up to a
+// pane's root process. Null outside tmux.
+function findTmuxPane() {
+  if (process.env.TMUX_PANE) return process.env.TMUX_PANE;
+  try {
+    const opts = { encoding: 'utf8', timeout: 1000 };
+    const panes = new Map(
+      execFileSync('tmux', ['list-panes', '-a', '-F', '#{pane_pid} #{pane_id}'], opts)
+        .trim().split('\n').map(l => l.split(' ')),
+    );
+    let pid = process.ppid;
+    for (let i = 0; i < 30 && pid > 1; i++) {
+      if (panes.has(String(pid))) return panes.get(String(pid));
+      pid = parseInt(execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], opts).trim(), 10);
+    }
+  } catch {}
+  return null;
+}
+
+// Bind the context to the session that received the Telegram message.
+function claimContext(ctx, sessionId) {
+  ctx.session_id = sessionId;
+  const pane = findTmuxPane();
+  if (pane) ctx.tmux_pane = pane;
+  return ctx;
 }
 
 let _token = null;
@@ -145,29 +214,56 @@ function getToken() {
   return _token;
 }
 
-let input = '';
-const stdinTimeout = setTimeout(() => process.exit(0), 3000);
-process.stdin.setEncoding('utf8');
-process.stdin.on('data', chunk => input += chunk);
-process.stdin.on('end', () => {
-  clearTimeout(stdinTimeout);
-  try {
-    const data = JSON.parse(input);
-    const toolName = data.tool_name || '';
-    const toolInput = data.tool_input || {};
-    const sessionId = data.session_id || '';
+if (MODE === 'interrupt') finalizeAndCleanup(true);
+else readHookInput();
 
-    if (MODE === 'pre') {
-      handlePreToolUse(toolName, toolInput, sessionId);
-    } else if (MODE === 'stop') {
-      handleStop(sessionId);
-    } else {
-      handlePostToolUse(data, toolName, toolInput);
+function readHookInput() {
+  let input = '';
+  const stdinTimeout = setTimeout(() => process.exit(0), 3000);
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', chunk => input += chunk);
+  process.stdin.on('end', () => {
+    clearTimeout(stdinTimeout);
+    try {
+      const data = JSON.parse(input);
+      const toolName = data.tool_name || '';
+      const toolInput = data.tool_input || {};
+      const sessionId = data.session_id || '';
+      const transcriptPath = data.transcript_path || '';
+
+      if (MODE === 'pre') {
+        handlePreToolUse(toolName, toolInput, sessionId, transcriptPath);
+      } else if (MODE === 'stop') {
+        handleStop(sessionId);
+      } else {
+        handlePostToolUse(data, toolName, toolInput);
+      }
+    } catch {
+      process.exit(0);
     }
-  } catch {
-    process.exit(0);
-  }
-});
+  });
+}
+
+// Ownership check: an unclaimed context (server wrote it without session_id)
+// may only be claimed by the session that actually received the inbound
+// Telegram message — otherwise every concurrent Claude session's tools would
+// pollute the trace. The receiving session provably has the <channel
+// source="telegram" chat_id="..."> block in its transcript; check the tail.
+function sessionOwnsChannel(transcriptPath, chatId) {
+  if (!transcriptPath || !chatId) return false;
+  try {
+    const fd = fs.openSync(transcriptPath, 'r');
+    const size = fs.fstatSync(fd).size;
+    const len = Math.min(size, 262144);
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, size - len);
+    fs.closeSync(fd);
+    const tail = buf.toString('utf8');
+    // Transcript is JSONL, so the channel block usually appears JSON-escaped.
+    return tail.includes(`chat_id=\\"${chatId}\\"`)
+      || tail.includes(`chat_id="${chatId}"`);
+  } catch { return false; }
+}
 
 // --- Stop: turn ended (with or without a reply) ---
 
@@ -182,7 +278,7 @@ function handleStop(sessionId) {
 
 // --- PreToolUse: write current tool to file for daemon ---
 
-function handlePreToolUse(toolName, toolInput, sessionId) {
+function handlePreToolUse(toolName, toolInput, sessionId, transcriptPath) {
   if (isTelegramTool(toolName)) {
     const action = getTelegramAction(toolName);
     if (action === 'reply' || action === 'send') {
@@ -217,13 +313,16 @@ function handlePreToolUse(toolName, toolInput, sessionId) {
   if (!label) process.exit(0);
 
   let ctx = readActive();
+  if (!ctx || !ctx.chat_id || isStale(ctx)) process.exit(0);
 
   // Auto-establish context: server wrote active file without session_id.
-  if (ctx && ctx.chat_id && !ctx.session_id && !isStale(ctx)) {
+  // Only the session that actually received the channel message may claim it.
+  if (!ctx.session_id) {
+    if (!sessionOwnsChannel(transcriptPath, ctx.chat_id)) process.exit(0);
     try { fs.unlinkSync(LOG_FILE); } catch {}
     try { fs.unlinkSync(CURRENT_TOOL_FILE); } catch {}
     killDaemon();
-    ctx.session_id = sessionId;
+    claimContext(ctx, sessionId);
     ctx.started_at = now();
     if (statusUpdatesEnabled() && getToken() && useDraftFor(ctx.chat_id)) {
       ctx.progress_msg_id = 'draft';
@@ -232,10 +331,10 @@ function handlePreToolUse(toolName, toolInput, sessionId) {
     } else {
       writeActive(ctx);
     }
+  } else if (ctx.session_id !== sessionId) {
+    process.exit(0);
   }
 
-  if (!ctx || !ctx.chat_id || isStale(ctx)) process.exit(0);
-  if (ctx.session_id && ctx.session_id !== sessionId) process.exit(0);
   if (!statusUpdatesEnabled()) process.exit(0);
 
   try { fs.writeFileSync(CURRENT_TOOL_FILE, label); } catch {}
@@ -272,7 +371,7 @@ function handlePostToolUse(data, toolName, toolInput) {
       killDaemon();
       try { fs.unlinkSync(LOG_FILE); } catch {}
       try { fs.unlinkSync(CURRENT_TOOL_FILE); } catch {}
-      const ctx = { chat_id: chatId, session_id: sessionId, timestamp: now(), started_at: now() };
+      const ctx = claimContext({ chat_id: chatId, timestamp: now(), started_at: now() }, sessionId);
       if (statusUpdatesEnabled() && getToken() && useDraftFor(chatId)) {
         ctx.progress_msg_id = 'draft';
         writeActive(ctx);
@@ -289,7 +388,7 @@ function handlePostToolUse(data, toolName, toolInput) {
         killDaemon();
         try { fs.unlinkSync(LOG_FILE); } catch {}
         try { fs.unlinkSync(CURRENT_TOOL_FILE); } catch {}
-        writeActive({ chat_id: chatId, session_id: sessionId, timestamp: now(), started_at: now() });
+        writeActive(claimContext({ chat_id: chatId, timestamp: now(), started_at: now() }, sessionId));
       }
       process.exit(0);
     }
@@ -317,8 +416,16 @@ function handlePostToolUse(data, toolName, toolInput) {
 
   const ctx = readActive();
   if (!ctx || !ctx.chat_id || isStale(ctx)) process.exit(0);
-  // Only the originating session contributes to progress
-  if (ctx.session_id && ctx.session_id !== sessionId) process.exit(0);
+  // Only the session connected to the channel contributes to the trace. An
+  // unclaimed context is claimed here iff this session received the inbound
+  // message (PreToolUse normally claims first; this covers its misses).
+  if (!ctx.session_id) {
+    if (!sessionOwnsChannel(data.transcript_path || '', ctx.chat_id)) process.exit(0);
+    claimContext(ctx, sessionId);
+    if (!ctx.started_at) ctx.started_at = now();
+  } else if (ctx.session_id !== sessionId) {
+    process.exit(0);
+  }
 
   // Error handling: no progress message sent yet + tool failed
   // Send error directly to Telegram (don't rely on Claude following additionalContext)
@@ -492,6 +599,7 @@ function editProgress(ctx) {
     message_id: Number(ctx.progress_msg_id),
     text,
     parse_mode: 'HTML',
+    reply_markup: STOP_MARKUP,
   });
 }
 

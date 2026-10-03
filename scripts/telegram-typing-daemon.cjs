@@ -17,10 +17,15 @@
 const https = require('https');
 const fs = require('fs');
 const {
-  PID_FILE, STOP_FILE, ACTIVE_FILE,
+  PID_FILE, STOP_FILE, ACTIVE_FILE, STOP_MARKUP,
   readToken, readProgressLog, readCurrentTool,
   formatProgress, formatProgressMarkdown,
 } = require('./telegram-shared.cjs');
+
+// Native Stop button on drafts (Bot API 10.3). Pressing it sends the server a
+// stopped_message_generation update, which interrupts the turn; keep_on_stop
+// leaves the partial trace visible until the server posts the final one.
+const DRAFT_STOP = { can_stop: true, keep_on_stop: true };
 
 const chatId = process.argv[2];
 const messageArg = process.argv[3] || null;
@@ -100,6 +105,7 @@ function updateProgress() {
           chat_id: Number(chatId),
           draft_id: DRAFT_ID,
           rich_message: { markdown: mdText },
+          ...DRAFT_STOP,
         }, (ok) => {
           if (!ok) {
             richDraftAvailable = false;
@@ -109,6 +115,7 @@ function updateProgress() {
               draft_id: DRAFT_ID,
               text,
               parse_mode: 'HTML',
+              ...DRAFT_STOP,
             }, (ok2) => {
               if (!ok2) {
                 draftMode = false;
@@ -127,6 +134,7 @@ function updateProgress() {
       draft_id: DRAFT_ID,
       text,
       parse_mode: 'HTML',
+      ...DRAFT_STOP,
     }, (ok) => {
       if (!ok) {
         draftMode = false;
@@ -143,6 +151,7 @@ function updateProgress() {
       message_id: Number(messageId),
       text,
       parse_mode: 'HTML',
+      reply_markup: STOP_MARKUP,
     });
   } else {
     // Fell back from draft mode with no message yet — create one to edit.
@@ -151,6 +160,7 @@ function updateProgress() {
       text,
       parse_mode: 'HTML',
       disable_notification: true,
+      reply_markup: STOP_MARKUP,
     }, (ok, msgId) => {
       if (msgId) messageId = String(msgId);
     });

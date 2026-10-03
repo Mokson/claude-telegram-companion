@@ -10,8 +10,8 @@ const os = require('os');
 const crypto = require('crypto');
 
 const HOME = os.homedir();
-const CLAUDE_DIR = path.join(HOME, '.claude');
-const TELEGRAM_DIR = path.join(CLAUDE_DIR, 'channels', 'telegram');
+const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || path.join(HOME, '.claude');
+const TELEGRAM_DIR = process.env.TELEGRAM_STATE_DIR || path.join(CLAUDE_DIR, 'channels', 'telegram');
 const CACHE_DIR = path.join(CLAUDE_DIR, 'plugins', 'cache');
 const SKILLS_DIR = path.join(CLAUDE_DIR, 'skills');
 

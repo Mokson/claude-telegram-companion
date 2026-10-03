@@ -138,7 +138,7 @@ function renderTextBlock(s: string): string {
       let expandable = false
       while (i < lines.length && /^>/.test(lines[i])) {
         let content = lines[i].replace(/^>\s?/, '')
-        if (block.length === 0 && content.startsWith('!')) {
+        if (block.length === 0 && content.startsWith('!') && content[1] !== '[') {
           expandable = true
           content = content.slice(1).replace(/^\s/, '')
         }
@@ -182,6 +182,137 @@ export function githubMdToTelegramMdV2(input: string): string {
     }
     return renderTextBlock(p.body)
   }).join('')
+}
+
+// ── Rich markdown (Bot API 10.1+) ────────────────────────────────────────────
+// sendRichMessage takes GFM-style markdown natively, but two constructs need
+// rewriting into the rich HTML tags Telegram documents:
+//  - `>!` quotes (our expandable-quote convention, shared with the MarkdownV2
+//    path) → <blockquote expandable>. Rich markdown has no syntax for it.
+//  - GFM tables → <table compact> (Bot API 10.3) so cells get smaller indents
+//    and more columns fit a phone screen.
+// Markdown isn't parsed inside block HTML tags, so the inline formatting of
+// those blocks is converted to rich HTML here. Fenced code passes through.
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+export function inlineMdToRichHtml(s: string): string {
+  // Code spans, custom emoji and link targets are swapped for placeholders
+  // so the emphasis passes below can't rewrite their contents (URLs with
+  // `_x_` or `==` would otherwise get <i>/<mark> injected).
+  const held: string[] = []
+  const hold = (html: string) => `\u0000${held.push(html) - 1}\u0000`
+  let out = escapeHtml(s)
+    .replace(/`([^`]+)`/g, (_, c: string) => hold(`<code>${c}</code>`))
+    .replace(/!\[([^\]]*)\]\(tg:\/\/emoji\?id=(\d+)\)/g, (_, t: string, id: string) =>
+      hold(`<tg-emoji emoji-id="${id}">`) + t + hold('</tg-emoji>'))
+    .replace(/\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/g, (_, t: string, u: string) =>
+      hold(`<a href="${u.replace(/"/g, '&quot;')}">`) + t + hold('</a>'))
+  out = out
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/(^|[^\p{L}\p{N}_])__(.+?)__(?![\p{L}\p{N}_])/gu, '$1<b>$2</b>')
+    .replace(/~~(.+?)~~/g, '<s>$1</s>')
+    .replace(/\|\|(.+?)\|\|/g, '<tg-spoiler>$1</tg-spoiler>')
+    .replace(/==(.+?)==/g, '<mark>$1</mark>')
+    .replace(/(^|[^\p{L}\p{N}_*])\*(?!\s)(.+?)(?<!\s)\*(?![\p{L}\p{N}_*])/gu, '$1<i>$2</i>')
+    .replace(/(^|[^\p{L}\p{N}_])_(?!\s)(.+?)(?<!\s)_(?![\p{L}\p{N}_])/gu, '$1<i>$2</i>')
+  return out.replace(/\u0000(\d+)\u0000/g, (_, n: string) => held[Number(n)]!)
+}
+
+// `>!` (or `> !`) opens an expandable quote; `> ![…](…)` is an image or
+// custom emoji inside a plain quote, not the marker.
+const EXPANDABLE_QUOTE_RE = /^>\s?!(?!\[)/
+
+const TABLE_SEP_RE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/
+
+function splitTableRow(line: string): string[] {
+  let s = line.trim()
+  if (s.startsWith('|')) s = s.slice(1)
+  if (s.endsWith('|') && !s.endsWith('\\|')) s = s.slice(0, -1)
+  return s.split(/(?<!\\)\|/).map(c => c.trim().replace(/\\\|/g, '|'))
+}
+
+function renderRichTable(header: string, sep: string, rows: string[]): string {
+  const aligns = splitTableRow(sep).map(c =>
+    c.startsWith(':') && c.endsWith(':') ? 'center' : c.endsWith(':') ? 'right' : c.startsWith(':') ? 'left' : '',
+  )
+  const cell = (tag: string, text: string, i: number) =>
+    `<${tag}${aligns[i] ? ` align="${aligns[i]}"` : ''}>${inlineMdToRichHtml(text)}</${tag}>`
+  const tr = (tag: string, line: string) => `<tr>${splitTableRow(line).map((c, i) => cell(tag, c, i)).join('')}</tr>`
+  return `<table compact>${tr('th', header)}${rows.map(r => tr('td', r)).join('')}</table>`
+}
+
+function prepareRichTextBlock(s: string): string {
+  const lines = s.split('\n')
+  const out: string[] = []
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i]!
+    if (EXPANDABLE_QUOTE_RE.test(line)) {
+      const block: string[] = []
+      while (i < lines.length && /^>/.test(lines[i]!)) {
+        let content = lines[i]!.replace(/^>\s?/, '')
+        if (block.length === 0) content = content.slice(1).replace(/^\s/, '')
+        block.push(inlineMdToRichHtml(content))
+        i++
+      }
+      out.push('', `<blockquote expandable>${block.join('<br>')}</blockquote>`, '')
+      continue
+    }
+    const next = lines[i + 1]
+    if (line.includes('|') && next !== undefined && next.includes('|') && TABLE_SEP_RE.test(next)) {
+      const sep = lines[i + 1]!
+      const rows: string[] = []
+      i += 2
+      while (i < lines.length && lines[i]!.includes('|') && lines[i]!.trim() !== '') rows.push(lines[i++]!)
+      out.push('', renderRichTable(line, sep, rows), '')
+      continue
+    }
+    out.push(line)
+    i++
+  }
+  return out.join('\n')
+}
+
+export function prepareRichMarkdown(input: string): string {
+  // An unclosed fence (e.g. a 32K chunk split mid-block) runs to the end.
+  const fenceRe = /(```|~~~)[^\n]*\n?[\s\S]*?(?:\1|$)/g
+  let out = ''
+  let last = 0
+  let m: RegExpExecArray | null
+  while ((m = fenceRe.exec(input)) !== null) {
+    out += prepareRichTextBlock(input.slice(last, m.index)) + m[0]
+    last = m.index + m[0].length
+  }
+  return out + prepareRichTextBlock(input.slice(last))
+}
+
+// Reply files embedded in a rich message are referenced as tg://<scheme>?id=fN.
+export type RichMediaRef = { id: string; scheme: 'photo' | 'video' | 'audio' | 'document' }
+
+// Point every tg://<any>?id=fN reference at its file's real scheme (the model
+// may guess wrong), then append the files the text never placed: 2+
+// photos/videos as one collage, the rest as standalone media blocks.
+export function embedRichMedia(markdown: string, media: RichMediaRef[]): string {
+  const byId = new Map(media.map(m => [m.id, m]))
+  const placed = new Set<string>()
+  const out = markdown.replace(/tg:\/\/(?:photo|video|audio|document)\?id=(f\d+)/g, (ref, id: string) => {
+    const m = byId.get(id)
+    if (!m) return ref
+    placed.add(id)
+    return `tg://${m.scheme}?id=${id}`
+  })
+  const rest = media.filter(m => !placed.has(m.id))
+  const block = (m: RichMediaRef) => `![](tg://${m.scheme}?id=${m.id})`
+  const visual = rest.filter(m => m.scheme === 'photo' || m.scheme === 'video')
+  const other = rest.filter(m => !visual.includes(m))
+  const blocks = visual.length >= 2
+    ? [`<tg-collage>\n\n${visual.map(block).join('\n')}\n\n</tg-collage>`]
+    : visual.map(block)
+  blocks.push(...other.map(block))
+  return blocks.length > 0 ? `${out.trimEnd()}\n\n${blocks.join('\n\n')}` : out
 }
 
 // Inbound rich text: Telegram delivers formatting out-of-band as message
