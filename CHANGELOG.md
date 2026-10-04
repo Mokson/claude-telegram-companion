@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.8.0
+
+### Added
+
+- **API failure notice**: a `StopFailure` hook tells the Telegram chat when an API error (rate limit, overload, billing, auth, server error, output token limit) ends the turn before Claude can reply. The `⚠️ Can't reply: …` message quotes Claude Code's own error line, which carries the reset time for rate limits. One notice per error type per 10 minutes, so messages sent while limited don't spam the chat. Turns that fail before any tool call still count: the session that received the message claims the turn by its transcript.
+
+### Fixed
+
+- **Stuck progress after an API error**: Claude Code fires `StopFailure` instead of `Stop` on a failed turn, so the progress message kept its Stop button and the typing daemon kept running. The failure hook now collapses and cleans up like `Stop`.
+
 ## v2.7.0
 
 Bot API 10.2/10.3 features (Stop button, embedded media, compact tables, disabled buttons, thinking drafts) and the upstream v0.0.7 reliability fixes.

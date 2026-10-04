@@ -16,6 +16,7 @@ Standalone Telegram channel for [Claude Code](https://claude.com/code). Self-hos
 - Inline keyboards (Bot API 9.4 styles / custom emoji) that stay visible, disabled, with the answer marked ✓ after a tap; reply-to context, forum supergroup topics, channel posts
 - Live progress UX: persistent tool-call tracker edited in place (quiet blockquote, silent send) that collapses into an expandable summary when the turn ends; optional draft streaming with a native thinking block; per-chat command menus; typing keepalive
 - `⏹ Stop` button on the progress message (and native Stop on drafts) interrupts the running Claude turn — requires the session to run in tmux
+- API failure notice: when a rate limit, overload, or auth error ends the turn before Claude can reply, the chat gets a `⚠️ Can't reply` message with Claude Code's error line (including the reset time); one notice per error type per 10 minutes. Needs Claude Code with the `StopFailure` hook
 
 ## Install
 
