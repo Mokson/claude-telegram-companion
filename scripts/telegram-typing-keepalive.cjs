@@ -20,6 +20,9 @@
 //               progress; finalize draft history before reply/send executes
 //   post      - append completed tools; manage daemon; finalize on reply/send
 //   stop      - turn ended; finalize progress and clean up (same session only)
+//   fail      - StopFailure: an API error (rate limit, overload, auth...)
+//               ended the turn, so Claude can't reply. Tell the user, then
+//               finalize like stop. Fires instead of Stop.
 //   interrupt - spawned by server.ts when the user taps Stop (no stdin):
 //               finalize the trace as "Stopped" and clean up. Claude Code
 //               fires no Stop hook on an interrupted turn.
@@ -235,6 +238,8 @@ function readHookInput() {
         handlePreToolUse(toolName, toolInput, sessionId, transcriptPath);
       } else if (MODE === 'stop') {
         handleStop(sessionId);
+      } else if (MODE === 'fail') {
+        handleStopFailure(data, sessionId, transcriptPath);
       } else {
         handlePostToolUse(data, toolName, toolInput);
       }
@@ -274,6 +279,55 @@ function handleStop(sessionId) {
   // server wrote that no session claimed yet is left for its owner.
   if (!ctx.session_id || ctx.session_id !== sessionId) process.exit(0);
   finalizeAndCleanup();
+}
+
+// --- StopFailure: an API error ended the turn before Claude could reply ---
+
+const FAILURE_LABELS = {
+  rate_limit: 'usage limit reached',
+  overloaded: 'Anthropic API is overloaded',
+  billing_error: 'billing problem on the account',
+  authentication_failed: 'authentication failed, log in again in the terminal',
+  oauth_org_not_allowed: 'this organization is not allowed',
+  account_on_hold: 'account is on hold',
+  verification_required: 'account verification required',
+  server_error: 'Anthropic API server error',
+  max_output_tokens: 'response exceeded the output token limit',
+  model_not_found: 'model not found',
+  cloud_credential_error: 'cloud credential error',
+};
+// While rate limited, every new message starts a turn that fails at once.
+// One notice per error type per window keeps that from spamming the chat.
+const FAILURE_NOTICE_FILE = path.join(require('os').tmpdir(), 'telegram-failure-notice.json');
+const FAILURE_NOTICE_COOLDOWN = 600;
+
+function handleStopFailure(data, sessionId, transcriptPath) {
+  const ctx = readActive();
+  if (!ctx || !ctx.chat_id || isStale(ctx)) process.exit(0);
+  // A turn that failed on its first API call never ran a tool, so the context
+  // may still be unclaimed: accept it iff this session received the message.
+  if (ctx.session_id ? ctx.session_id !== sessionId : !sessionOwnsChannel(transcriptPath, ctx.chat_id)) {
+    process.exit(0);
+  }
+
+  const error = data.error || 'unknown';
+  if (!getToken()) { finalizeAndCleanup(); return; }
+  let last = {};
+  try { last = JSON.parse(fs.readFileSync(FAILURE_NOTICE_FILE, 'utf8')); } catch {}
+  if (last.error === error && now() - (last.at || 0) < FAILURE_NOTICE_COOLDOWN) {
+    finalizeAndCleanup();
+    return;
+  }
+  try { fs.writeFileSync(FAILURE_NOTICE_FILE, JSON.stringify({ error, at: now() })); } catch {}
+
+  // last_assistant_message carries Claude Code's own error line, which for
+  // rate limits includes the reset time ("... resets 3pm").
+  const detail = String(data.last_assistant_message || data.error_details || '').trim().slice(0, 300);
+  const label = FAILURE_LABELS[error] || `API error (${error})`;
+  const text = `⚠️ <b>Can't reply: ${escapeHtml(label)}.</b>`
+    + (detail ? `\n<blockquote>${escapeHtml(detail)}</blockquote>` : '');
+  telegramPostSync('sendMessage', { chat_id: ctx.chat_id, text, parse_mode: 'HTML' },
+    () => finalizeAndCleanup());
 }
 
 // --- PreToolUse: write current tool to file for daemon ---
