@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.8.1
+
+### Fixed
+
+- **BotFather command menu is no longer overridden**: the server stopped setting `/start`, `/help`, `/status` at `all_private_chats` scope on bot start, and the `SessionStart` skill sync is now opt-in (`"commands": { "sync": true }` in `command-config.json`). Both wrote scopes that outrank BotFather's default scope. With sync off, the hook deletes the `all_private_chats` and per-chat menus earlier versions left behind, once (marker `.commands-cleared`).
+
 ## v2.8.0
 
 ### Added

@@ -7,7 +7,9 @@
     },
     "aliases": {},
     "extra": [
-      { "command": "help", "description": "Show available commands and capabilities" }
+      { "command": "start", "description": "Welcome and setup guide" },
+      { "command": "help", "description": "What this bot can do" },
+      { "command": "status", "description": "Check your pairing status" }
     ]
   },
   "progress": {

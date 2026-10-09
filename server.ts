@@ -1897,17 +1897,8 @@ if (isPollingLeader) void (async () => {
           attempt = 0
           botUsername = info.username
           process.stderr.write(`telegram channel: polling as @${info.username}\n`)
-          // Register bot-level commands in Telegram's "/" autocomplete menu.
-          // Companion's sync hook overrides this with dynamic per-chat skill
-          // discovery at SessionStart.
-          void bot.api.setMyCommands(
-            [
-              { command: 'start', description: 'Welcome and setup guide' },
-              { command: 'help', description: 'What this bot can do' },
-              { command: 'status', description: 'Check your pairing status' },
-            ],
-            { scope: { type: 'all_private_chats' } },
-          ).catch(() => {})
+          // The "/" menu is left to BotFather (default scope); setting a
+          // narrower scope here would hide the owner's commands.
         },
       })
       return // bot.stop() was called — clean exit from the loop

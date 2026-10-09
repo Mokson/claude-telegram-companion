@@ -14,7 +14,7 @@ Standalone Telegram channel for [Claude Code](https://claude.com/code). Self-hos
 - Files embedded in the reply's rich message (photos/videos as a collage, documents and audio as media blocks); separate messages on the fallback path
 - Inbound formatting preserved: user spoilers, quotes, code, and links are reconstructed from Telegram entities before reaching Claude
 - Inline keyboards (Bot API 9.4 styles / custom emoji) that stay visible, disabled, with the answer marked ✓ after a tap; reply-to context, forum supergroup topics, channel posts
-- Live progress UX: persistent tool-call tracker edited in place (quiet blockquote, silent send) that collapses into an expandable summary when the turn ends; optional draft streaming with a native thinking block; per-chat command menus; typing keepalive
+- Live progress UX: persistent tool-call tracker edited in place (quiet blockquote, silent send) that collapses into an expandable summary when the turn ends; optional draft streaming with a native thinking block; opt-in per-chat skill command menus; typing keepalive
 - `⏹ Stop` button on the progress message (and native Stop on drafts) interrupts the running Claude turn — requires the session to run in tmux
 - API failure notice: when a rate limit, overload, or auth error ends the turn before Claude can reply, the chat gets a `⚠️ Can't reply` message with Claude Code's error line (including the reset time); one notice per error type per 10 minutes. Needs Claude Code with the `StopFailure` hook
 
@@ -58,6 +58,8 @@ State lives in `~/.claude/channels/telegram/access.json`. Manage via the `access
 | `/claude-telegram-companion:access allow <user-id>` | Add a user to the allowlist |
 | `/claude-telegram-companion:access group add <chat-id>` | Enable a group |
 | `/claude-telegram-companion:access set ackReaction 👀` | Set ack reaction emoji |
+
+The bot's `/` command menu is yours to set in BotFather (`/setcommands`); the plugin leaves it alone. To replace it with your installed skills for allowlisted chats, set `"commands": { "sync": true }` in `~/.claude/channels/telegram/command-config.json` (see `config/command-config.example.json`); the menu syncs at session start and hides the BotFather menu for those chats.
 
 Optional environment variables:
 

@@ -354,14 +354,12 @@ function buildCommands(skills, config) {
 
 // --- Telegram API ---
 
-function setMyCommands(token, commands, scope) {
+function callApi(token, method, body) {
   return new Promise((resolve, reject) => {
-    const body = { commands };
-    if (scope) body.scope = scope;
     const data = JSON.stringify(body);
     const options = {
       hostname: 'api.telegram.org',
-      path: `/bot${token}/setMyCommands`,
+      path: `/bot${token}/${method}`,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -400,14 +398,36 @@ async function main() {
   }
 
   // 2. Read config (optional; use defaults if missing)
-  const config = readJSON(path.join(TELEGRAM_DIR, 'command-config.json')) || {
-    commands: { sync: true, exclude: { plugins: [], skills: [] }, aliases: {}, extra: [] },
-    progress: { statusUpdates: true }
-  };
+  const config = readJSON(path.join(TELEGRAM_DIR, 'command-config.json')) || {};
 
-  // 3. Check if command sync is enabled (default: true)
-  const syncEnabled = (config.commands || {}).sync !== false;
-  if (!syncEnabled) return;
+  const access = readJSON(path.join(TELEGRAM_DIR, 'access.json'));
+  const chatIds = (access && access.allowFrom) || [];
+  const hashFile = path.join(TELEGRAM_DIR, '.commands-sync-hash');
+  const clearedFile = path.join(TELEGRAM_DIR, '.commands-cleared');
+
+  // 3. Sync is opt-in: by default the menu belongs to BotFather (default
+  // scope). Narrower scopes win over it, so drop the ones earlier versions
+  // wrote (all_private_chats on bot start, per-chat here) once.
+  const syncEnabled = (config.commands || {}).sync === true;
+  if (!syncEnabled) {
+    if (fs.existsSync(clearedFile)) return;
+    const scopes = [{ type: 'all_private_chats' }]
+      .concat(chatIds.map(chatId => ({ type: 'chat', chat_id: chatId })));
+    let allOk = true;
+    for (const scope of scopes) {
+      try {
+        await callApi(token, 'deleteMyCommands', { scope });
+      } catch (err) {
+        allOk = false;
+        process.stderr.write(`telegram-sync-commands: deleteMyCommands failed for ${JSON.stringify(scope)}: ${err.message}\n`);
+      }
+    }
+    if (allOk) {
+      try { fs.writeFileSync(clearedFile, ''); } catch {}
+      try { fs.unlinkSync(hashFile); } catch {}
+    }
+    return;
+  }
 
   // 4. Discover skills
   const skills = discoverSkills();
@@ -415,17 +435,12 @@ async function main() {
   // 5. Build command list
   const commands = buildCommands(skills, config);
 
-  // 6. Sync to Telegram
-  // The official plugin sets commands at all_private_chats scope on bot start,
-  // which overrides default scope. Use per-chat scope (highest priority) from
-  // access.json allowlist so our commands can't be overridden.
-  const access = readJSON(path.join(TELEGRAM_DIR, 'access.json'));
-  const chatIds = (access && access.allowFrom) || [];
+  // 6. Sync to Telegram at per-chat scope (highest priority) for the
+  // access.json allowlist; this hides BotFather's menu for those chats.
   if (chatIds.length === 0) return;
 
   // Skip the network round-trip when nothing changed since the last
   // successful sync — most session starts.
-  const hashFile = path.join(TELEGRAM_DIR, '.commands-sync-hash');
   const hash = crypto.createHash('sha256')
     .update(JSON.stringify({ commands, chatIds }))
     .digest('hex');
@@ -437,7 +452,7 @@ async function main() {
   let allOk = true;
   for (const chatId of chatIds) {
     try {
-      await setMyCommands(token, commands, { type: 'chat', chat_id: chatId });
+      await callApi(token, 'setMyCommands', { commands, scope: { type: 'chat', chat_id: chatId } });
     } catch (err) {
       allOk = false;
       process.stderr.write(`telegram-sync-commands: setMyCommands failed for ${chatId}: ${err.message}\n`);
@@ -445,6 +460,7 @@ async function main() {
   }
   if (allOk) {
     try { fs.writeFileSync(hashFile, hash + '\n'); } catch {}
+    try { fs.unlinkSync(clearedFile); } catch {}
   }
 }
 
