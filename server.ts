@@ -552,6 +552,54 @@ if (isPollingLeader) {
   setInterval(() => { queuePrunePending(); queuePruneDelivered() }, 6 * 60 * 60 * 1000).unref()
 }
 
+// Claude Code login expiry warning. Once the login lapses the session can't
+// run a turn, so it goes silent without saying why. The leader checks every
+// 6h and DMs allowFrom once a day from AUTH_WARN_DAYS out. Expiry comes from
+// TELEGRAM_AUTH_EXPIRES_AT (any Date.parse format; needed for a
+// `claude setup-token` token, which carries no readable expiry), else from
+// the OAuth refresh token in .credentials.json.
+const AUTH_WARN_DAYS = 3
+const AUTH_WARNED_FILE = join(STATE_DIR, '.auth-warned')
+
+function authExpiresAt(): number | undefined {
+  const configured = process.env.TELEGRAM_AUTH_EXPIRES_AT
+  if (configured) {
+    const t = Date.parse(configured)
+    return Number.isNaN(t) ? undefined : t
+  }
+  if (process.env.CLAUDE_CODE_OAUTH_TOKEN) return undefined
+  try {
+    const configDir = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
+    const creds = JSON.parse(readFileSync(join(configDir, '.credentials.json'), 'utf8'))
+    return creds.claudeAiOauth?.refreshTokenExpiresAt
+  } catch { return undefined }
+}
+
+async function checkAuthExpiry(): Promise<void> {
+  const expiresAt = authExpiresAt()
+  if (!expiresAt) return
+  const days = (expiresAt - Date.now()) / 86_400_000
+  if (days > AUTH_WARN_DAYS) return
+  const today = new Date().toISOString().slice(0, 10)
+  try { if (readFileSync(AUTH_WARNED_FILE, 'utf8') === today) return } catch {}
+  writeFileSync(AUTH_WARNED_FILE, today)
+  const when = new Date(expiresAt).toISOString().slice(0, 16).replace('T', ' ') + ' UTC'
+  const head = days > 0
+    ? `Claude Code login expires in ${Math.ceil(days)} day${Math.ceil(days) === 1 ? '' : 's'}`
+    : 'Claude Code login expired'
+  const text = `⚠️ <b>${head}</b> (${when}).\nRenew it on the host: <code>claude setup-token</code> or <code>/login</code>.`
+  for (const chatId of loadAccess().allowFrom) {
+    await bot.api.sendMessage(chatId, text, { parse_mode: 'HTML' }).catch(err => {
+      process.stderr.write(`telegram channel: auth expiry warning to ${chatId} failed: ${err}\n`)
+    })
+  }
+}
+
+if (isPollingLeader) {
+  void checkAuthExpiry()
+  setInterval(() => { void checkAuthExpiry() }, 6 * 60 * 60 * 1000).unref()
+}
+
 // Telegram caps messages at 4096 chars. Split long replies, preferring
 // paragraph boundaries when chunkMode is 'newline'.
 

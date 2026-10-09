@@ -68,6 +68,7 @@ Optional environment variables:
 | `TELEGRAM_STATE_DIR` | Override the state dir (default `$CLAUDE_CONFIG_DIR/channels/telegram/`, else `~/.claude/channels/telegram/`) |
 | `TELEGRAM_PLUGIN_HEARTBEAT` | Path to write a unix-timestamp heartbeat for external watchdogs |
 | `TELEGRAM_ACCESS_MODE=static` | Snapshot access at boot (no runtime mutation) |
+| `TELEGRAM_AUTH_EXPIRES_AT` | Claude Code login expiry (e.g. `2027-10-09`), for a `claude setup-token` token. Allowlisted users get a DM from 3 days out. Without it, the OAuth refresh token's expiry in `.credentials.json` is used |
 
 ## License
 
