@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.9.0
+
+### Added
+
+- **Login expiry warning**: the polling leader DMs allowlisted users once a day from 3 days before the Claude Code login expires, so an expired login no longer leaves the bot silent without explanation. Expiry comes from `TELEGRAM_AUTH_EXPIRES_AT` (set it for a `claude setup-token` token, which carries no readable expiry), else from the OAuth refresh token in `.credentials.json`. Checked at startup and every 6 hours.
+
 ## v2.8.1
 
 ### Fixed
