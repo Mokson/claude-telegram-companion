@@ -1784,10 +1784,12 @@ async function handleInbound(
 
   // Permission-reply intercept: if this looks like "yes xxxxx" for a
   // pending permission request, emit the structured event instead of
-  // relaying as chat. The sender is already gate()-approved at this point
-  // (non-allowlisted senders were dropped above), so we trust the reply.
+  // relaying as chat. gate() also delivers members of groups and channels
+  // whose allowFrom is empty, so only DM-allowlisted senders may resolve a
+  // permission prompt, matching the inline-button path. Anyone else falls
+  // through to the normal relay.
   const permMatch = PERMISSION_REPLY_RE.exec(text)
-  if (permMatch) {
+  if (permMatch && from && access.allowFrom.includes(String(from.id))) {
     void mcp.notification({
       method: 'notifications/claude/channel/permission',
       params: {
