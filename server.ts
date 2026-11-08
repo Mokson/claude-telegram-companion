@@ -33,6 +33,7 @@ import {
   prepareRichMarkdown,
   embedRichMedia,
   entitiesToMarkdown,
+  escapeHtml,
   type InboundEntity,
   type RichMediaRef,
 } from './markdown.ts'
@@ -595,6 +596,38 @@ async function checkAuthExpiry(): Promise<void> {
   }
 }
 
+// Usage (rate) limit notice. While the subscription's usage limit is hit,
+// every turn fails on its first API call, so the bot would go silent. The
+// StopFailure hook (scripts/telegram-typing-keepalive.cjs) records the limit
+// in RATE_LIMIT_FILE with Claude Code's own error line and the reset time;
+// until then each inbound message gets this notice. A normal Stop deletes it.
+const RATE_LIMIT_FILE = join(STATE_DIR, 'rate-limit.json')
+// Keep in sync with RATE_LIMIT_FALLBACK_TTL in the keepalive script.
+const RATE_LIMIT_FALLBACK_TTL_MS = 60 * 60 * 1000
+
+function formatDuration(ms: number): string {
+  const min = Math.max(1, Math.round(ms / 60_000))
+  if (min < 60) return `${min}m`
+  const h = Math.floor(min / 60)
+  if (h < 48) return `${h}h${min % 60 ? ` ${min % 60}m` : ''}`
+  return `${Math.round(h / 24)}d`
+}
+
+function rateLimitNotice(): string | undefined {
+  let state: { at?: number; resets_at?: number; detail?: string }
+  try { state = JSON.parse(readFileSync(RATE_LIMIT_FILE, 'utf8')) } catch { return undefined }
+  const now = Date.now()
+  const resetsAt = state.resets_at ? state.resets_at * 1000 : undefined
+  const expired = resetsAt ? resetsAt <= now : now - (state.at ?? 0) * 1000 > RATE_LIMIT_FALLBACK_TTL_MS
+  if (expired) {
+    try { rmSync(RATE_LIMIT_FILE, { force: true }) } catch {}
+    return undefined
+  }
+  const eta = resetsAt ? ` Resets in ${formatDuration(resetsAt - now)}.` : ''
+  return `⏳ <b>Claude usage limit reached — can't reply until it resets.</b>${eta}`
+    + (state.detail ? `\n<blockquote>${escapeHtml(state.detail)}</blockquote>` : '')
+}
+
 if (isPollingLeader) {
   void checkAuthExpiry()
   setInterval(() => { void checkAuthExpiry() }, 6 * 60 * 60 * 1000).unref()
@@ -841,6 +874,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 mcp.setRequestHandler(CallToolRequestSchema, async req => {
   const args = (req.params.arguments ?? {}) as Record<string, unknown>
+  sessionResponded()
   try {
     switch (req.params.name) {
       case 'reply': {
@@ -1252,6 +1286,122 @@ bot.command('status', async ctx => {
 const ACTIVE_FILE = join(tmpdir(), 'telegram-active.json')
 const KEEPALIVE_SCRIPT = join(import.meta.dir, 'scripts', 'telegram-typing-keepalive.cjs')
 
+// Write the active file so PostToolUse hooks auto-start progress tracking for
+// the turn this inbound (text message or inline-button click) triggers. A
+// context a session is actively running for the same chat is preserved — a
+// mid-task follow-up must not reset the running trace or let another session
+// hijack it. "Actively" = a hook touched the context in the last minute, or
+// within 10 minutes while the progress daemon is alive (one long tool call
+// fires no hooks). A turn that ended without a Stop hook (local Esc, crash)
+// leaves a stale context — and possibly a lingering daemon — that must not be
+// reused indefinitely.
+const QUEUED_REACTION = '🫡'
+
+type ActiveContext = { chat_id?: string; session_id?: string; timestamp?: number; tmux_pane?: string }
+
+function readActiveContext(): ActiveContext | undefined {
+  try { return JSON.parse(readFileSync(ACTIVE_FILE, 'utf8')) as ActiveContext } catch { return undefined }
+}
+
+// The context of a turn a session is running right now, if any.
+function runningTurn(): ActiveContext | undefined {
+  const ctx = readActiveContext()
+  if (!ctx?.session_id) return undefined
+  let daemonAlive = false
+  try {
+    process.kill(parseInt(readFileSync(join(tmpdir(), 'telegram-typing-pid'), 'utf8'), 10), 0)
+    daemonAlive = true
+  } catch {}
+  const age = Math.floor(Date.now() / 1000) - (ctx.timestamp ?? 0)
+  return age < 60 || (daemonAlive && age < 600) ? ctx : undefined
+}
+
+function markChatActive(chat_id: string): void {
+  try {
+    if (runningTurn()?.chat_id === chat_id) return
+    writeFileSync(ACTIVE_FILE, JSON.stringify({ chat_id, timestamp: Math.floor(Date.now() / 1000) }))
+    watchForStuck(chat_id)
+  } catch {}
+}
+
+// Stuck-session watchdog. A session blocked on a terminal dialog (permission
+// prompt, "restart to apply" update, login) or a dead one never takes the
+// message: no hook claims the context the server wrote, no Stop deletes it,
+// no tool call comes back. After TELEGRAM_STUCK_AFTER_SEC (default 180, 0
+// disables) the chat gets one notice with the tail of the session's tmux
+// pane, which usually shows what it is waiting on.
+const STUCK_AFTER_MS = (Number(process.env.TELEGRAM_STUCK_AFTER_SEC ?? 180) || 0) * 1000
+let stuckWatch: { chat_id: string; since: number; timer: ReturnType<typeof setTimeout> } | undefined
+
+function watchForStuck(chat_id: string): void {
+  if (!STUCK_AFTER_MS) return
+  if (stuckWatch) clearTimeout(stuckWatch.timer)
+  const since = Date.now()
+  const timer = setTimeout(() => { void checkStuck(chat_id, since) }, STUCK_AFTER_MS)
+  timer.unref()
+  stuckWatch = { chat_id, since, timer }
+}
+
+// Any tool call from the session proves it is alive and working.
+function sessionResponded(): void {
+  if (stuckWatch) { clearTimeout(stuckWatch.timer); stuckWatch = undefined }
+}
+
+// The tmux pane this server's Claude session runs in: TMUX_PANE when
+// inherited, else our process ancestry matched against tmux's pane pids.
+function ownTmuxPane(): string | undefined {
+  if (process.env.TMUX_PANE) return process.env.TMUX_PANE
+  try {
+    const opts = { encoding: 'utf8' as const, timeout: 1000 }
+    const panes = new Map(
+      execFileSync('tmux', ['list-panes', '-a', '-F', '#{pane_pid} #{pane_id}'], opts)
+        .trim().split('\n').map(l => l.split(' ') as [string, string]),
+    )
+    let pid = process.ppid
+    for (let i = 0; i < 30 && pid > 1; i++) {
+      const pane = panes.get(String(pid))
+      if (pane) return pane
+      pid = parseInt(execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], opts).trim(), 10)
+    }
+  } catch {}
+  return undefined
+}
+
+function paneTail(pane: string, lines = 12): string | undefined {
+  try {
+    const out = execFileSync('tmux', ['capture-pane', '-p', '-t', pane], { encoding: 'utf8', timeout: 2000 })
+    const rows = out.split('\n').map(l => l.trimEnd()).filter(l => l.trim())
+    return rows.slice(-lines).join('\n').slice(-1500) || undefined
+  } catch { return undefined }
+}
+
+async function checkStuck(chat_id: string, since: number): Promise<void> {
+  if (stuckWatch?.since === since) stuckWatch = undefined
+  const ctx = readActiveContext()
+  // Claimed, finished (file gone), or replaced by a newer inbound: not stuck.
+  if (!ctx || ctx.session_id || ctx.chat_id !== chat_id) return
+  if ((ctx.timestamp ?? 0) * 1000 > since + 1000) return
+  if (rateLimitNotice()) return
+  const pane = ownTmuxPane()
+  const tail = pane ? paneTail(pane) : undefined
+  // A long think before the first tool call fires no hook; the spinner line
+  // shows the session is working, so check again later instead.
+  if (tail && /esc to interrupt/.test(tail)) {
+    const timer = setTimeout(() => { void checkStuck(chat_id, since) }, STUCK_AFTER_MS)
+    timer.unref()
+    stuckWatch = { chat_id, since, timer }
+    return
+  }
+  const mins = Math.round(STUCK_AFTER_MS / 60_000)
+  const text = `⚠️ <b>No response after ${mins} min — the Claude session looks stuck.</b>\n`
+    + (tail
+      ? `Its terminal shows:\n<pre>${escapeHtml(tail)}</pre>`
+      : 'It may be waiting on a terminal prompt, or not running.')
+  await bot.api.sendMessage(chat_id, text, { parse_mode: 'HTML' }).catch(err => {
+    process.stderr.write(`telegram channel: stuck notice to ${chat_id} failed: ${err}\n`)
+  })
+}
+
 function interruptActiveTurn(chatId: string): 'stopped' | 'idle' | 'no-pane' {
   let ctx: { chat_id?: string; session_id?: string; tmux_pane?: string }
   try { ctx = JSON.parse(readFileSync(ACTIVE_FILE, 'utf8')) } catch { return 'idle' }
@@ -1366,6 +1516,18 @@ bot.on('callback_query:data', async ctx => {
       : false
     if (!disabledOk) await ctx.editMessageReplyMarkup({}).catch(() => {})
     await ctx.answerCallbackQuery({ text: `✓ ${clickedLabel}` }).catch(() => {})
+
+    // A click starts a turn just like a text message: arm progress tracking
+    // (Stop hook of the previous turn deleted the active file).
+    if (chatId) {
+      const limitNotice = rateLimitNotice()
+      if (limitNotice) {
+        void bot.api.sendMessage(chatId, limitNotice, { parse_mode: 'HTML', disable_notification: true }).catch(() => {})
+      } else {
+        void bot.api.sendChatAction(chatId, 'typing').catch(() => {})
+      }
+      markChatActive(chatId)
+    }
 
     void mcp.notification({
       method: 'notifications/claude/channel',
@@ -1808,47 +1970,37 @@ async function handleInbound(
     return
   }
 
-  // Typing indicator — signals "processing" until we reply (or ~5s elapses).
-  void bot.api.sendChatAction(chat_id, 'typing').catch(() => {})
+  // Usage limit hit: the turn will fail at once, so say why up front. The
+  // message is still relayed — it goes through if the limit lifted early.
+  const limitNotice = rateLimitNotice()
+  if (limitNotice) {
+    void bot.api.sendMessage(chat_id, limitNotice, {
+      parse_mode: 'HTML',
+      disable_notification: true,
+      ...(msgId != null ? { reply_parameters: { message_id: msgId } } : {}),
+      ...(messageThreadId != null ? { message_thread_id: messageThreadId } : {}),
+    }).catch(() => {})
+  } else {
+    // Typing indicator — signals "processing" until we reply (or ~5s elapses).
+    void bot.api.sendChatAction(chat_id, 'typing').catch(() => {})
+  }
 
-  // Write active file so PostToolUse hooks can auto-start progress tracking
-  // without requiring an explicit ack tool call from Claude. A context a
-  // session is actively running for the same chat is preserved — a mid-task
-  // follow-up message must not reset the running trace or let another
-  // session hijack it. "Actively" = a hook touched the context in the last
-  // minute, or within 10 minutes while the progress daemon is alive (one long
-  // tool call fires no hooks). A turn that ended without a Stop hook (local
-  // Esc, crash) leaves a stale context — and possibly a lingering daemon —
-  // that must not be reused indefinitely.
-  try {
-    const nowSec = Math.floor(Date.now() / 1000)
-    let preserve = false
-    try {
-      const existing = JSON.parse(readFileSync(ACTIVE_FILE, 'utf8')) as {
-        chat_id?: string; session_id?: string; timestamp?: number
-      }
-      let daemonAlive = false
-      try {
-        process.kill(parseInt(readFileSync(join(tmpdir(), 'telegram-typing-pid'), 'utf8'), 10), 0)
-        daemonAlive = true
-      } catch {}
-      const age = nowSec - (existing.timestamp ?? 0)
-      preserve = existing.chat_id === chat_id
-        && !!existing.session_id
-        && (age < 60 || (daemonAlive && age < 600))
-    } catch {}
-    if (!preserve) {
-      writeFileSync(ACTIVE_FILE, JSON.stringify({ chat_id, timestamp: nowSec }))
-    }
-  } catch {}
+  // A message that lands while a turn is running waits until Claude Code
+  // picks it up (between tool calls or after the turn), with no sign it
+  // arrived. Mark it queued. Read before markChatActive rewrites the context.
+  const queued = !limitNotice && !!runningTurn()
+
+  markChatActive(chat_id)
 
   // Ack reaction — lets the user know we're processing. Fire-and-forget.
-  // Telegram only accepts a fixed emoji whitelist — if the user configures
-  // something outside that set the API rejects it and we swallow.
-  if (access.ackReaction && msgId != null) {
+  // Telegram only accepts a fixed emoji whitelist (⏳ isn't on it) — if the
+  // user configures something outside that set the API rejects it and we
+  // swallow.
+  const reaction = queued ? QUEUED_REACTION : access.ackReaction
+  if (reaction && msgId != null) {
     void bot.api
       .setMessageReaction(chat_id, msgId, [
-        { type: 'emoji', emoji: access.ackReaction as ReactionTypeEmoji['emoji'] },
+        { type: 'emoji', emoji: reaction as ReactionTypeEmoji['emoji'] },
       ])
       .catch(() => {})
   }

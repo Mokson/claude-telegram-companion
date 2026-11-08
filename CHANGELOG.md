@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.10.0
+
+### Added
+
+- **Stuck-session watchdog**: when no session picks up a message within 3 minutes (no hook claims it, no tool call, no turn end), the chat gets one notice with the tail of the session's tmux pane, which usually shows what it is waiting on: a permission prompt, a "restart to apply" update, a login dialog. A pane showing the "esc to interrupt" spinner counts as working and is checked again later. `TELEGRAM_STUCK_AFTER_SEC` sets the delay; `0` disables it.
+- **Queued-message reaction**: a message that arrives while a turn is running gets a 🫡 reaction, so it is visibly queued rather than lost (Telegram's reaction whitelist has no ⏳).
+- **Usage limit notice on every message**: when the subscription's usage limit is hit, the `StopFailure` hook records it (Claude Code's error line plus the reset time from the failed turn) in `rate-limit.json` in the state dir. Until the reset, the server answers each inbound message or button tap with `⏳ Claude usage limit reached — can't reply until it resets. Resets in 2h 30m.` instead of showing typing and going silent. The message is still relayed, so it goes through if the limit lifts early. A normal turn end clears the state.
+
+### Fixed
+
+- **No progress after an inline-button answer**: a button tap started a turn without arming progress tracking, so its tool calls never showed. Button taps now share the text path's `markChatActive`.
+
 ## v2.9.0
 
 ### Added

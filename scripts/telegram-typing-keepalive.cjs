@@ -237,7 +237,7 @@ function readHookInput() {
       if (MODE === 'pre') {
         handlePreToolUse(toolName, toolInput, sessionId, transcriptPath);
       } else if (MODE === 'stop') {
-        handleStop(sessionId);
+        handleStop(sessionId, transcriptPath);
       } else if (MODE === 'fail') {
         handleStopFailure(data, sessionId, transcriptPath);
       } else {
@@ -272,12 +272,21 @@ function sessionOwnsChannel(transcriptPath, chatId) {
 
 // --- Stop: turn ended (with or without a reply) ---
 
-function handleStop(sessionId) {
+function handleStop(sessionId, transcriptPath) {
+  // A turn that ended normally proves the usage limit is over (e.g. extra
+  // usage was enabled before the reset).
+  try { fs.unlinkSync(RATE_LIMIT_FILE); } catch {}
   const ctx = readActive();
   if (!ctx || !ctx.chat_id) process.exit(0);
-  // Only the session that owns the context may finalize it. A context the
-  // server wrote that no session claimed yet is left for its owner.
-  if (!ctx.session_id || ctx.session_id !== sessionId) process.exit(0);
+  // A turn that ran no tool never claimed the context. If this session
+  // received the message, its turn is over: drop the context, so the server's
+  // stuck-session watchdog doesn't take it for a message nobody picked up.
+  if (!ctx.session_id) {
+    if (sessionOwnsChannel(transcriptPath, ctx.chat_id)) cleanup();
+    process.exit(0);
+  }
+  // Only the session that owns the context may finalize it.
+  if (ctx.session_id !== sessionId) process.exit(0);
   finalizeAndCleanup();
 }
 
@@ -300,6 +309,11 @@ const FAILURE_LABELS = {
 // One notice per error type per window keeps that from spamming the chat.
 const FAILURE_NOTICE_FILE = path.join(require('os').tmpdir(), 'telegram-failure-notice.json');
 const FAILURE_NOTICE_COOLDOWN = 600;
+// Shared with server.ts, which answers inbound messages while limited.
+const RATE_LIMIT_FILE = path.join(STATE_DIR, 'rate-limit.json');
+// Without a readable reset time, treat the limit as active this long
+// (seconds); keep in sync with RATE_LIMIT_FALLBACK_TTL_MS in server.ts.
+const RATE_LIMIT_FALLBACK_TTL = 3600;
 
 function handleStopFailure(data, sessionId, transcriptPath) {
   const ctx = readActive();
@@ -311,6 +325,13 @@ function handleStopFailure(data, sessionId, transcriptPath) {
   }
 
   const error = data.error || 'unknown';
+  if (error === 'rate_limit') {
+    // Once the limit is known, server.ts answers every inbound message
+    // itself; a second notice from here would duplicate it.
+    const known = rateLimitKnown();
+    recordRateLimit(data, transcriptPath, ctx.chat_id);
+    if (known) { finalizeAndCleanup(); return; }
+  }
   if (!getToken()) { finalizeAndCleanup(); return; }
   let last = {};
   try { last = JSON.parse(fs.readFileSync(FAILURE_NOTICE_FILE, 'utf8')); } catch {}
@@ -328,6 +349,50 @@ function handleStopFailure(data, sessionId, transcriptPath) {
     + (detail ? `\n<blockquote>${escapeHtml(detail)}</blockquote>` : '');
   telegramPostSync('sendMessage', { chat_id: ctx.chat_id, text, parse_mode: 'HTML' },
     () => finalizeAndCleanup());
+}
+
+// While limited, every message fails at once without reaching a hook that can
+// explain (and the notice above is throttled). Record the limit so the server
+// can answer each inbound message itself until the reset. The reset time is
+// read from the failed turn's synthetic assistant record (quotaLimits /
+// apiErrorParams.rate_limit_info carry resetsAt in unix seconds).
+function readRateLimitResetsAt(transcriptPath) {
+  if (!transcriptPath) return undefined;
+  try {
+    const fd = fs.openSync(transcriptPath, 'r');
+    const size = fs.fstatSync(fd).size;
+    const len = Math.min(size, 262144);
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, size - len);
+    fs.closeSync(fd);
+    const lines = buf.toString('utf8').split('\n').reverse();
+    for (const line of lines) {
+      if (!line.includes('"rate_limit"')) continue;
+      try {
+        const rec = JSON.parse(line);
+        if (rec.error !== 'rate_limit') continue;
+        const t = (rec.quotaLimits && rec.quotaLimits.resetsAt)
+          || (rec.apiErrorParams && rec.apiErrorParams.rate_limit_info && rec.apiErrorParams.rate_limit_info.resetsAt);
+        return typeof t === 'number' ? t : undefined;
+      } catch {}
+    }
+  } catch {}
+  return undefined;
+}
+
+function rateLimitKnown() {
+  try {
+    const s = JSON.parse(fs.readFileSync(RATE_LIMIT_FILE, 'utf8'));
+    return s.resets_at ? s.resets_at > now() : now() - (s.at || 0) < RATE_LIMIT_FALLBACK_TTL;
+  } catch { return false; }
+}
+
+function recordRateLimit(data, transcriptPath, chatId) {
+  const detail = String(data.last_assistant_message || data.error_details || '').trim().slice(0, 300);
+  const state = { chat_id: chatId, at: now(), detail };
+  const resetsAt = readRateLimitResetsAt(transcriptPath);
+  if (resetsAt) state.resets_at = resetsAt;
+  try { fs.writeFileSync(RATE_LIMIT_FILE, JSON.stringify(state)); } catch {}
 }
 
 // --- PreToolUse: write current tool to file for daemon ---

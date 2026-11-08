@@ -194,7 +194,7 @@ export function githubMdToTelegramMdV2(input: string): string {
 // Markdown isn't parsed inside block HTML tags, so the inline formatting of
 // those blocks is converted to rich HTML here. Fenced code passes through.
 
-function escapeHtml(s: string): string {
+export function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
