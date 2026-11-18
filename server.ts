@@ -37,6 +37,7 @@ import {
   type InboundEntity,
   type RichMediaRef,
 } from './markdown.ts'
+import { parseRelayCommand, runRelay, type RelayIO, type RelayResult, type RelaySpec } from './relay.ts'
 
 const STATE_DIR = process.env.TELEGRAM_STATE_DIR
   ?? join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'channels', 'telegram')
@@ -1257,6 +1258,13 @@ bot.command('help', async ctx => {
     `Messages you send here route to a paired Claude Code session. ` +
     `Text, photos, files and voice messages are forwarded; replies and reactions come back. ` +
     `Tap ⏹ Stop under the progress message to interrupt a running task.\n\n` +
+    `Terminal commands (need the session in tmux):\n` +
+    `/stop — interrupt the running task\n` +
+    `/clear — start a fresh conversation\n` +
+    `/compact [instructions] — compact the conversation\n` +
+    `/context — context usage\n` +
+    `/cost — session cost and plan usage\n` +
+    `/model <name>, /effort <level> — switch model or effort\n\n` +
     `/start — pairing instructions\n` +
     `/status — check your pairing state`
   )
@@ -1419,6 +1427,69 @@ function interruptActiveTurn(chatId: string): 'stopped' | 'idle' | 'no-pane' {
   child.on('error', err => process.stderr.write(`telegram channel: interrupt cleanup failed: ${err}\n`))
   child.unref()
   return 'stopped'
+}
+
+// Run a relayed built-in in this session's pane and report back. A running
+// turn would swallow the keys as a queued message, so it is refused, as is a
+// pane whose prompt is covered by a dialog. One relay at a time: two typed
+// into the same prompt would merge into one malformed line.
+let relayInFlight = false
+
+async function relayBuiltin(
+  spec: RelaySpec,
+  chat_id: string,
+  where: { reply_parameters?: { message_id: number }; message_thread_id?: number },
+): Promise<void> {
+  const say = (html: string) =>
+    bot.api.sendMessage(chat_id, html, { parse_mode: 'HTML', ...where }).catch(err => {
+      process.stderr.write(`telegram channel: relay reply failed: ${err}\n`)
+    })
+  const cmd = `<code>${escapeHtml(spec.command)}</code>`
+  if (relayInFlight) { await say(`⏳ Another terminal command is still running. Send ${cmd} again when it finishes.`); return }
+  relayInFlight = true
+  try { await relayLocked(spec, cmd, say) } finally { relayInFlight = false }
+}
+
+async function relayLocked(spec: RelaySpec, cmd: string, say: (html: string) => Promise<unknown>): Promise<void> {
+  const pane = ownTmuxPane()
+  if (!pane) { await say(`Can't run ${cmd}: the Claude session isn't running in tmux.`); return }
+  if (runningTurn()) { await say(`⏳ A task is running. Tap ⏹ Stop or wait for it to finish, then send ${cmd} again.`); return }
+
+  const tmux = (...args: string[]) => execFileSync('tmux', args, { encoding: 'utf8', timeout: 2000 })
+  const io: RelayIO = {
+    sendText: t => { tmux('send-keys', '-t', pane, '-l', '--', t) },
+    sendKeys: (...keys) => { tmux('send-keys', '-t', pane, ...keys) },
+    capture: scrollback => tmux('capture-pane', '-p', '-J', '-t', pane, ...(scrollback ? ['-S', '-300'] : [])),
+    sleep: ms => new Promise(r => setTimeout(r, ms)),
+  }
+  let result: RelayResult
+  try {
+    result = await runRelay(spec, io, spec.mode === 'compact' ? () => { void say(`🗜 Compacting…`) } : undefined)
+  } catch (err) {
+    process.stderr.write(`telegram channel: relay of ${spec.command} failed: ${err}\n`)
+    await say(`Couldn't reach the terminal to run ${cmd}.`)
+    return
+  }
+  switch (result.status) {
+    case 'busy':
+      await say(`⏳ The session is busy. Tap ⏹ Stop or wait, then send ${cmd} again.`)
+      return
+    case 'blocked': {
+      const tail = paneTail(pane)
+      await say(`Can't run ${cmd}: the terminal isn't at its prompt.`
+        + (tail ? `\n<pre>${escapeHtml(tail)}</pre>` : ''))
+      return
+    }
+    case 'timeout':
+      await say(`${cmd} is still running after 10 minutes.`)
+      return
+    case 'done': {
+      const head = spec.mode === 'clear' ? '🧹 Context cleared.'
+        : spec.mode === 'compact' ? '✅ Compacted.'
+        : `<b>${escapeHtml(spec.command)}</b>`
+      await say(head + (result.output ? `\n<pre>${escapeHtml(result.output)}</pre>` : spec.mode === 'inline' || spec.mode === 'dialog' ? ' sent; no output captured.' : ''))
+    }
+  }
 }
 
 const STOP_RESULT_TEXT = {
@@ -1967,6 +2038,28 @@ async function handleInbound(
         { type: 'emoji', emoji: emoji as ReactionTypeEmoji['emoji'] },
       ]).catch(() => {})
     }
+    return
+  }
+
+  // Built-in command intercept: /clear, /compact, /context, /cost, /model x,
+  // /effort x and /stop never reach Claude. The server types them into the
+  // session's tmux pane, so they work even when no turn can run. Plain text
+  // DMs from allowlisted senders only: replies carry terminal output, which a
+  // group would show to every member, and a photo captioned /clear is a photo.
+  const spec = ctx.chat?.type === 'private' && !downloadImage && !attachment
+    && from && access.allowFrom.includes(String(from.id))
+    ? parseRelayCommand(text, botUsername) : null
+  if (spec) {
+    const where = {
+      ...(msgId != null ? { reply_parameters: { message_id: msgId } } : {}),
+      ...(messageThreadId != null ? { message_thread_id: messageThreadId } : {}),
+    }
+    if (spec.mode === 'stop') {
+      await bot.api.sendMessage(chat_id, STOP_RESULT_TEXT[interruptActiveTurn(chat_id)], where).catch(() => {})
+      return
+    }
+    // Detached: a /compact can take minutes, and grammy handles updates in order.
+    void relayBuiltin(spec, chat_id, where)
     return
   }
 

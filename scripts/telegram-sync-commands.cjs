@@ -259,6 +259,16 @@ function discoverSkills() {
 // Priority: lower number wins bare name on collision
 const SCOPE_PRIORITY = { project: 0, command: 0, user: 1, plugin: 2 };
 
+// Keep in step with the allowlist in relay.ts. /model and /effort need an
+// argument, so they are typed rather than tapped and stay off the menu.
+const RELAYED_BUILTINS = [
+  { command: 'stop', description: 'Interrupt the running task' },
+  { command: 'clear', description: 'Start a fresh conversation' },
+  { command: 'compact', description: 'Compact the conversation' },
+  { command: 'context', description: 'Show context usage' },
+  { command: 'cost', description: 'Show session cost and plan usage' },
+];
+
 function configLookup(map, skill) {
   if (skill.id in map) return skill.id;
   if (skill.name !== skill.id && skill.name in map) return skill.name;
@@ -318,8 +328,10 @@ function buildCommands(skills, config) {
   // Sort by priority so higher-priority items claim names first
   candidates.sort((a, b) => a.priority - b.priority);
 
-  const seen = new Set();
-  const commands = [];
+  // Built-ins the server relays to the terminal claim their names first, so a
+  // skill named `clear` or `context` can't shadow them.
+  const commands = RELAYED_BUILTINS.map(c => ({ ...c }));
+  const seen = new Set(commands.map(c => c.command));
 
   for (const c of candidates) {
     const name = !seen.has(c.command) ? c.command
