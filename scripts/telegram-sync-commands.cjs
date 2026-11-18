@@ -267,6 +267,7 @@ const RELAYED_BUILTINS = [
   { command: 'compact', description: 'Compact the conversation' },
   { command: 'context', description: 'Show context usage' },
   { command: 'cost', description: 'Show session cost and plan usage' },
+  { command: 'usage', description: 'Show plan usage' },
 ];
 
 function configLookup(map, skill) {

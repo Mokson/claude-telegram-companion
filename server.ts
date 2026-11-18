@@ -1263,7 +1263,7 @@ bot.command('help', async ctx => {
     `/clear — start a fresh conversation\n` +
     `/compact [instructions] — compact the conversation\n` +
     `/context — context usage\n` +
-    `/cost — session cost and plan usage\n` +
+    `/cost, /usage — session cost and plan usage\n` +
     `/model <name>, /effort <level> — switch model or effort\n\n` +
     `/start — pairing instructions\n` +
     `/status — check your pairing state`

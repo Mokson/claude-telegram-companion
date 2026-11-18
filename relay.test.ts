@@ -34,6 +34,7 @@ describe('parseRelayCommand', () => {
     expect(parseRelayCommand('/clear', 'bot')).toEqual({ command: '/clear', mode: 'clear' })
     expect(parseRelayCommand('/context', 'bot')).toEqual({ command: '/context', mode: 'inline' })
     expect(parseRelayCommand('/cost', 'bot')).toEqual({ command: '/cost', mode: 'dialog' })
+    expect(parseRelayCommand('/usage', 'bot')).toEqual({ command: '/usage', mode: 'dialog' })
     expect(parseRelayCommand(' /Model sonnet ', 'bot')).toEqual({ command: '/model sonnet', mode: 'inline' })
     expect(parseRelayCommand('/effort high', 'bot')).toEqual({ command: '/effort high', mode: 'inline' })
     expect(parseRelayCommand('/compact keep the open questions', 'bot'))
@@ -97,6 +98,25 @@ describe('extractOutput', () => {
   test('no echo of the command means no output', () => {
     expect(extractOutput(EFFORT_SCREEN, { command: '/context', mode: 'inline' })).toBeUndefined()
   })
+
+  test('output is found with notice rows under the prompt box', () => {
+    const screen = ['❯ /model sonnet', '  ⎿  Set model to Sonnet 5.5', ...prompt(), ...Array(9).fill('  some notice row')].join('\n')
+    expect(paneState(screen)).toBe('ready')
+    expect(extractOutput(screen, { command: '/model sonnet', mode: 'inline' })).toBe('Set model to Sonnet 5.5')
+  })
+
+  test("an earlier run's echo is not taken for the new run's output", () => {
+    const old = ['❯ /model sonnet', '  ⎿  Set model to Sonnet 5.5', ...prompt()].join('\n')
+    const spec = { command: '/model sonnet', mode: 'inline' } as const
+    expect(extractOutput(old, spec, 1)).toBeUndefined()
+    const fresh = ['❯ /model sonnet', '  ⎿  Set model to Sonnet 5.5', '❯ /model sonnet', '  ⎿  Kept model as Sonnet 5.5', ...prompt()].join('\n')
+    expect(extractOutput(fresh, spec, 1)).toBe('Kept model as Sonnet 5.5')
+  })
+
+  test('/model opus does not match an echo of /model opusplan', () => {
+    const screen = ['❯ /model opusplan', '  ⎿  Set model to Opus Plan', ...prompt()].join('\n')
+    expect(extractOutput(screen, { command: '/model opus', mode: 'inline' })).toBeUndefined()
+  })
 })
 
 describe('runRelay', () => {
@@ -125,20 +145,20 @@ describe('runRelay', () => {
   })
 
   test('dialog command is typed, captured, then closed with Esc', async () => {
-    const { io, sent } = fakeIO([EFFORT_SCREEN, COST_SCREEN, EFFORT_SCREEN])
+    const { io, sent } = fakeIO([EFFORT_SCREEN, EFFORT_SCREEN, COST_SCREEN, EFFORT_SCREEN])
     const r = await runRelay({ command: '/cost', mode: 'dialog' }, io)
     expect(r.status).toBe('done')
     expect(sent).toEqual(['text:/cost', 'Enter', 'Enter', 'Escape'])
   })
 
   test('an ignored Esc is retried until the prompt is back', async () => {
-    const { io, sent } = fakeIO([EFFORT_SCREEN, COST_SCREEN, COST_SCREEN, EFFORT_SCREEN])
+    const { io, sent } = fakeIO([EFFORT_SCREEN, EFFORT_SCREEN, COST_SCREEN, COST_SCREEN, EFFORT_SCREEN])
     await runRelay({ command: '/cost', mode: 'dialog' }, io)
     expect(sent.filter(k => k === 'Escape')).toHaveLength(2)
   })
 
   test('no further Esc once the panel is gone, even if a turn started', async () => {
-    const { io, sent } = fakeIO([EFFORT_SCREEN, COST_SCREEN, BUSY_SCREEN])
+    const { io, sent } = fakeIO([EFFORT_SCREEN, EFFORT_SCREEN, COST_SCREEN, BUSY_SCREEN])
     await runRelay({ command: '/cost', mode: 'dialog' }, io)
     expect(sent.filter(k => k === 'Escape')).toHaveLength(1)
   })
@@ -150,7 +170,7 @@ describe('runRelay', () => {
 
   test('compact waits out the spinner before reporting', async () => {
     const done = [...EFFORT_SCREEN.split('\n').slice(0, 2), '❯ /compact', '  ⎿  Compacted', ...prompt()].join('\n')
-    const { io } = fakeIO([EFFORT_SCREEN, BUSY_SCREEN, BUSY_SCREEN, done])
+    const { io } = fakeIO([EFFORT_SCREEN, EFFORT_SCREEN, BUSY_SCREEN, BUSY_SCREEN, done])
     let started = false
     const r = await runRelay({ command: '/compact', mode: 'compact' }, io, () => { started = true })
     expect(started).toBe(true)
