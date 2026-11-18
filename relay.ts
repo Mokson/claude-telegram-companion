@@ -81,17 +81,31 @@ export function paneState(screen: string): 'ready' | 'busy' | 'blocked' {
 // into the prompt leaves it unchanged; a submitted command changes it. A count
 // of echoes can't tell a new run from an old one, because on a full screen the
 // oldest echo scrolls off as the new one appears.
-export function transcript(screen: string): string {
+export function transcript(screen: string): string[] {
   const rows = lines(screen)
   const prompt = promptIndex(rows)
-  return (prompt > 0 ? rows.slice(0, prompt - 1) : rows).join('\n')
+  return prompt > 0 ? rows.slice(0, prompt - 1) : rows
+}
+
+// Where the transcript captured before typing ends inside a later capture: the
+// index just past the first place its last rows appear. Scrolling drops rows
+// from the top, so those rows stay; a new echo must come after them. -1 when
+// they're gone (a redraw changed the layout), so nothing is trusted.
+function endOf(before: string[], rows: string[]): number {
+  const anchor = before.slice(-3)
+  if (anchor.length === 0) return 0
+  for (let i = 0; i + anchor.length <= rows.length; i++) {
+    if (anchor.every((r, k) => rows[i + k] === r)) return i + anchor.length
+  }
+  return -1
 }
 
 // The command's output from a pane capture (joined lines, with scrollback):
 // for a dialog, the panel under its top edge; otherwise the lines under the
 // newest echo of the command, up to the prompt box, a spinner or the next
-// prompt, minus trailing right-aligned status rows.
-export function extractOutput(screen: string, spec: RelaySpec): string | undefined {
+// prompt, minus trailing right-aligned status rows. With `before` (the
+// transcript before typing), only an echo that appeared after it counts.
+export function extractOutput(screen: string, spec: RelaySpec, before?: string[]): string | undefined {
   const rows = lines(screen)
   let out: string[]
   if (spec.mode === 'dialog') {
@@ -104,6 +118,10 @@ export function extractOutput(screen: string, spec: RelaySpec): string | undefin
     let at = -1
     for (let i = rows.length - 1; i >= 0; i--) if (rows[i] === echo || rows[i]!.startsWith(`${echo} `)) { at = i; break }
     if (at < 0) return undefined
+    if (before) {
+      const min = endOf(before, rows)
+      if (min < 0 || at < min) return undefined
+    }
     const start = at + 1
     let end = start
     while (end < rows.length && !BORDER_RE.test(rows[end]!) && !rows[end]!.startsWith('❯') && !isSpinner(rows[end]!)) end++
@@ -165,10 +183,14 @@ async function typeAndRead(
   compactTimeoutMs: number,
 ): Promise<RelayResult> {
   const before = transcript(io.capture(true))
-  // Output of this run, not an earlier one: only once the transcript changed.
+  const beforeText = before.join('\n')
+  // Output of this run, not an earlier one: only once the transcript changed,
+  // and only under an echo that appeared after what was there before.
+  // A successful /compact clears the screen, so the anchor is gone by design.
   const fresh = () => {
     const screen = io.capture(true)
-    return transcript(screen) === before ? undefined : extractOutput(screen, spec)
+    if (transcript(screen).join('\n') === beforeText) return undefined
+    return extractOutput(screen, spec, spec.mode === 'compact' ? undefined : before)
   }
 
   // The first Enter closes the slash-command autocomplete, the second submits.

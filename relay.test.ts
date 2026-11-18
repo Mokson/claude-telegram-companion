@@ -126,8 +126,10 @@ describe('runRelay', () => {
   }
 
   test('inline output waits until it stops changing, in a grown pane that is restored', async () => {
-    const half = ['❯ /context', '  ⎿  Context usage', ...prompt()].join('\n')
-    const full = ['❯ /context', '  ⎿  Context usage', '     Skills: 9k', ...prompt()].join('\n')
+    // A real pane keeps what was above the prompt; the new run lands under it.
+    const above = EFFORT_SCREEN.split('\n').slice(0, -prompt().length)
+    const half = [...above, '❯ /context', '  ⎿  Context usage', ...prompt()].join('\n')
+    const full = [...above, '❯ /context', '  ⎿  Context usage', '     Skills: 9k', ...prompt()].join('\n')
     const { io, sent } = fakeIO([EFFORT_SCREEN, EFFORT_SCREEN, half, full, full])
     io.grow = () => { sent.push('grow'); return () => { sent.push('restore') } }
     const r = await runRelay({ command: '/context', mode: 'inline' }, io)
@@ -143,6 +145,14 @@ describe('runRelay', () => {
     const { io } = fakeIO([old, old, old, old, scrolled, scrolled])
     const r = await runRelay({ command: '/model sonnet', mode: 'inline' }, io)
     expect(r).toEqual({ status: 'done', output: 'Set model (this run)' })
+  })
+
+  test('an unrelated row appearing first does not pass off the old run as new', async () => {
+    const old = ['❯ /context', '  ⎿  Context usage OLD', ...prompt()].join('\n')
+    const injected = ['❯ /context', '  ⎿  Context usage OLD', '● hello from telegram turn', ...prompt()].join('\n')
+    const { io } = fakeIO([old, old, injected])
+    const r = await runRelay({ command: '/context', mode: 'inline' }, io)
+    expect(r).toEqual({ status: 'done', output: undefined })
   })
 
   test('the pane is restored even when typing fails', async () => {
