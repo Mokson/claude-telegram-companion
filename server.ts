@@ -1461,6 +1461,20 @@ async function relayLocked(spec: RelaySpec, cmd: string, say: (html: string) => 
     sendKeys: (...keys) => { tmux('send-keys', '-t', pane, ...keys) },
     capture: scrollback => tmux('capture-pane', '-p', '-J', '-t', pane, ...(scrollback ? ['-S', '-300'] : [])),
     sleep: ms => new Promise(r => setTimeout(r, ms)),
+    // resize-window pins the window to a manual size; restore the height,
+    // then unset the option so the window follows attached clients again.
+    grow: () => {
+      const height = tmux('display-message', '-p', '-t', pane, '#{window_height}').trim()
+      tmux('resize-window', '-t', pane, '-y', '150')
+      return () => {
+        try {
+          tmux('resize-window', '-t', pane, '-y', height)
+          tmux('set-option', '-w', '-u', '-t', pane, 'window-size')
+        } catch (err) {
+          process.stderr.write(`telegram channel: restoring pane size failed: ${err}\n`)
+        }
+      }
+    },
   }
   let result: RelayResult
   try {

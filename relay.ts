@@ -77,26 +77,35 @@ export function paneState(screen: string): 'ready' | 'busy' | 'blocked' {
   return promptIndex(rows) >= 0 ? 'ready' : 'blocked'
 }
 
-// Rows that echo the submitted command, oldest first.
-function echoRows(rows: string[], command: string): number[] {
-  const echo = `❯ ${command}`
-  const at: number[] = []
-  rows.forEach((r, i) => { if (r === echo || r.startsWith(`${echo} `)) at.push(i) })
-  return at
+// The transcript part of a capture: everything above the prompt box. Typing
+// into the prompt leaves it unchanged; a submitted command changes it. A count
+// of echoes can't tell a new run from an old one, because on a full screen the
+// oldest echo scrolls off as the new one appears.
+export function transcript(screen: string): string[] {
+  const rows = lines(screen)
+  const prompt = promptIndex(rows)
+  return prompt > 0 ? rows.slice(0, prompt - 1) : rows
 }
 
-// How many times the command's echo is on screen, to tell a new run's output
-// from an earlier run of the same command.
-export function countEchoes(screen: string, command: string): number {
-  return echoRows(lines(screen), command).length
+// Where the transcript captured before typing ends inside a later capture: the
+// index just past the first place its last rows appear. Scrolling drops rows
+// from the top, so those rows stay; a new echo must come after them. -1 when
+// they're gone (a redraw changed the layout), so nothing is trusted.
+function endOf(before: string[], rows: string[]): number {
+  const anchor = before.slice(-3)
+  if (anchor.length === 0) return 0
+  for (let i = 0; i + anchor.length <= rows.length; i++) {
+    if (anchor.every((r, k) => rows[i + k] === r)) return i + anchor.length
+  }
+  return -1
 }
 
 // The command's output from a pane capture (joined lines, with scrollback):
 // for a dialog, the panel under its top edge; otherwise the lines under the
 // newest echo of the command, up to the prompt box, a spinner or the next
-// prompt, minus trailing right-aligned status rows. Undefined until the echo
-// count exceeds `seenEchoes` and output has rendered under it.
-export function extractOutput(screen: string, spec: RelaySpec, seenEchoes = 0): string | undefined {
+// prompt, minus trailing right-aligned status rows. With `before` (the
+// transcript before typing), only an echo that appeared after it counts.
+export function extractOutput(screen: string, spec: RelaySpec, before?: string[]): string | undefined {
   const rows = lines(screen)
   let out: string[]
   if (spec.mode === 'dialog') {
@@ -105,9 +114,15 @@ export function extractOutput(screen: string, spec: RelaySpec, seenEchoes = 0): 
     if (top < 0) return undefined
     out = rows.slice(top + 1)
   } else {
-    const echoes = echoRows(rows, spec.command)
-    if (echoes.length <= seenEchoes) return undefined
-    const start = echoes[echoes.length - 1]! + 1
+    const echo = `❯ ${spec.command}`
+    let at = -1
+    for (let i = rows.length - 1; i >= 0; i--) if (rows[i] === echo || rows[i]!.startsWith(`${echo} `)) { at = i; break }
+    if (at < 0) return undefined
+    if (before) {
+      const min = endOf(before, rows)
+      if (min < 0 || at < min) return undefined
+    }
+    const start = at + 1
     let end = start
     while (end < rows.length && !BORDER_RE.test(rows[end]!) && !rows[end]!.startsWith('❯') && !isSpinner(rows[end]!)) end++
     while (end > start && /^ {20,}\S/.test(rows[end - 1]!)) end--
@@ -122,6 +137,11 @@ export type RelayIO = {
   sendText: (text: string) => void
   capture: (withScrollback: boolean) => string
   sleep: (ms: number) => Promise<void>
+  // Make the pane tall enough for long output and return a function that
+  // restores it. Claude Code may run on the alternate screen, where tmux keeps
+  // no scrollback: output taller than the pane is lost to a capture, but a
+  // taller pane makes Claude Code redraw it in full.
+  grow?: () => () => void
 }
 
 export type RelayResult =
@@ -138,9 +158,40 @@ export async function runRelay(
   compactTimeoutMs = 10 * 60_000,
 ): Promise<RelayResult> {
   if (spec.mode === 'stop') throw new Error('/stop is handled by the server, not typed')
-  const state = paneState(io.capture(false))
+  // A pane mid-redraw (just resized, just closed a panel) briefly shows no
+  // prompt box, so give 'blocked' a moment before refusing.
+  let state = paneState(io.capture(false))
+  for (let tries = 0; state === 'blocked' && tries < 4; tries++) {
+    await io.sleep(500)
+    state = paneState(io.capture(false))
+  }
   if (state !== 'ready') return { status: state }
-  const seenEchoes = countEchoes(io.capture(true), spec.command)
+
+  const restore = spec.mode === 'inline' || spec.mode === 'dialog' ? io.grow?.() : undefined
+  try {
+    if (restore) await io.sleep(600)
+    return await typeAndRead(spec, io, onStarted, compactTimeoutMs)
+  } finally {
+    restore?.()
+  }
+}
+
+async function typeAndRead(
+  spec: RelaySpec,
+  io: RelayIO,
+  onStarted: (() => void) | undefined,
+  compactTimeoutMs: number,
+): Promise<RelayResult> {
+  const before = transcript(io.capture(true))
+  const beforeText = before.join('\n')
+  // Output of this run, not an earlier one: only once the transcript changed,
+  // and only under an echo that appeared after what was there before.
+  // A successful /compact clears the screen, so the anchor is gone by design.
+  const fresh = () => {
+    const screen = io.capture(true)
+    if (transcript(screen).join('\n') === beforeText) return undefined
+    return extractOutput(screen, spec, spec.mode === 'compact' ? undefined : before)
+  }
 
   // The first Enter closes the slash-command autocomplete, the second submits.
   // A second Enter on an empty prompt does nothing.
@@ -152,17 +203,21 @@ export async function runRelay(
   onStarted?.()
 
   switch (spec.mode) {
+    case 'stop':
     case 'clear':
       await io.sleep(1500)
       return { status: 'done' }
     case 'inline': {
       // Output usually renders within a second; a busy redraw can take longer.
+      // Take it once two reads agree, so a half-drawn block isn't sent.
+      let last: string | undefined
       for (let waited = 0; waited < 8000; waited += 500) {
         await io.sleep(500)
-        const output = extractOutput(io.capture(true), spec, seenEchoes)
-        if (output) return { status: 'done', output }
+        const output = fresh()
+        if (output && output === last) return { status: 'done', output }
+        last = output
       }
-      return { status: 'done' }
+      return { status: 'done', output: last }
     }
     case 'dialog': {
       await io.sleep(2000)
@@ -182,7 +237,7 @@ export async function runRelay(
       await io.sleep(3000)
       for (let waited = 3000; waited < compactTimeoutMs; waited += 3000) {
         if (paneState(io.capture(false)) === 'ready') {
-          return { status: 'done', output: extractOutput(io.capture(true), spec, seenEchoes) }
+          return { status: 'done', output: fresh() }
         }
         await io.sleep(3000)
       }
