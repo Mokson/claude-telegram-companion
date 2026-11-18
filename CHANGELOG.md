@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.11.1
+
+### Fixed
+
+- **"sent; no output captured" for inline commands**: a relayed `/model`, `/effort` or `/context` read the pane once at 2.5 s and needed the prompt box within the last 8 rows, so a slow redraw or notice rows under the prompt lost output that had rendered. It now polls every 0.5 s for up to 8 s, reads the lines under the newest echo of the command (ignoring an earlier run's echo of the same command), and looks for the prompt box in the last 16 rows.
+
+### Added
+
+- `/usage` relays like `/cost` (same panel, closed with Esc) and joins the synced menu.
+
 ## v2.11.0
 
 ### Added

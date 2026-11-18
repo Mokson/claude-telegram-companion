@@ -17,7 +17,7 @@ export type RelaySpec = { command: string; mode: RelayMode }
 // one line, or in a dialog that a single Esc closes without changing anything.
 // /fast is out: its dialog toggles fast mode on Enter. Pickers (/resume, /model
 // with no argument) and access, permission and plugin commands stay out.
-const SIMPLE: Record<string, RelayMode> = { clear: 'clear', context: 'inline', cost: 'dialog' }
+const SIMPLE: Record<string, RelayMode> = { clear: 'clear', context: 'inline', cost: 'dialog', usage: 'dialog' }
 const WITH_ARG = new Set(['model', 'effort'])
 const ARG_RE = /^[\w.:[\]-]{1,64}$/
 const MAX_COMPACT_ARGS = 500
@@ -61,9 +61,10 @@ function dialogOpen(screen: string): boolean {
 }
 
 // Index of the empty-or-not input prompt line, framed by borders, near the
-// bottom of the screen. Absent while a dialog covers the prompt.
+// bottom of the screen; notices and suggestion lists can sit under it. Absent
+// while a dialog covers the prompt.
 function promptIndex(rows: string[]): number {
-  for (let i = rows.length - 1; i >= Math.max(1, rows.length - 8); i--) {
+  for (let i = rows.length - 1; i >= Math.max(1, rows.length - 16); i--) {
     if (rows[i]!.startsWith('❯') && BORDER_RE.test(rows[i - 1]!) && BORDER_RE.test(rows[i + 1] ?? '')) return i
   }
   return -1
@@ -76,10 +77,26 @@ export function paneState(screen: string): 'ready' | 'busy' | 'blocked' {
   return promptIndex(rows) >= 0 ? 'ready' : 'blocked'
 }
 
+// Rows that echo the submitted command, oldest first.
+function echoRows(rows: string[], command: string): number[] {
+  const echo = `❯ ${command}`
+  const at: number[] = []
+  rows.forEach((r, i) => { if (r === echo || r.startsWith(`${echo} `)) at.push(i) })
+  return at
+}
+
+// How many times the command's echo is on screen, to tell a new run's output
+// from an earlier run of the same command.
+export function countEchoes(screen: string, command: string): number {
+  return echoRows(lines(screen), command).length
+}
+
 // The command's output from a pane capture (joined lines, with scrollback):
-// for a dialog, the panel under its top edge; otherwise the lines between the
-// command's echo and the prompt box, minus the right-aligned status line.
-export function extractOutput(screen: string, spec: RelaySpec): string | undefined {
+// for a dialog, the panel under its top edge; otherwise the lines under the
+// newest echo of the command, up to the prompt box, a spinner or the next
+// prompt, minus trailing right-aligned status rows. Undefined until the echo
+// count exceeds `seenEchoes` and output has rendered under it.
+export function extractOutput(screen: string, spec: RelaySpec, seenEchoes = 0): string | undefined {
   const rows = lines(screen)
   let out: string[]
   if (spec.mode === 'dialog') {
@@ -88,14 +105,13 @@ export function extractOutput(screen: string, spec: RelaySpec): string | undefin
     if (top < 0) return undefined
     out = rows.slice(top + 1)
   } else {
-    const prompt = promptIndex(rows)
-    if (prompt < 0) return undefined
-    let end = prompt - 1
-    if (end > 0 && /^ {20,}\S/.test(rows[end - 1]!)) end--
-    let echo = -1
-    for (let i = end - 1; i >= 0; i--) if (rows[i]!.startsWith(`❯ ${spec.command}`)) { echo = i; break }
-    if (echo < 0) return undefined
-    out = rows.slice(echo + 1, end)
+    const echoes = echoRows(rows, spec.command)
+    if (echoes.length <= seenEchoes) return undefined
+    const start = echoes[echoes.length - 1]! + 1
+    let end = start
+    while (end < rows.length && !BORDER_RE.test(rows[end]!) && !rows[end]!.startsWith('❯') && !isSpinner(rows[end]!)) end++
+    while (end > start && /^ {20,}\S/.test(rows[end - 1]!)) end--
+    out = rows.slice(start, end)
   }
   const text = out.map(r => r.replace(/^\s*⎿\s+/, '')).join('\n').trim()
   return text ? (text.length > 3000 ? text.slice(0, 3000) + '\n…' : text) : undefined
@@ -124,6 +140,7 @@ export async function runRelay(
   if (spec.mode === 'stop') throw new Error('/stop is handled by the server, not typed')
   const state = paneState(io.capture(false))
   if (state !== 'ready') return { status: state }
+  const seenEchoes = countEchoes(io.capture(true), spec.command)
 
   // The first Enter closes the slash-command autocomplete, the second submits.
   // A second Enter on an empty prompt does nothing.
@@ -138,9 +155,15 @@ export async function runRelay(
     case 'clear':
       await io.sleep(1500)
       return { status: 'done' }
-    case 'inline':
-      await io.sleep(2500)
-      return { status: 'done', output: extractOutput(io.capture(true), spec) }
+    case 'inline': {
+      // Output usually renders within a second; a busy redraw can take longer.
+      for (let waited = 0; waited < 8000; waited += 500) {
+        await io.sleep(500)
+        const output = extractOutput(io.capture(true), spec, seenEchoes)
+        if (output) return { status: 'done', output }
+      }
+      return { status: 'done' }
+    }
     case 'dialog': {
       await io.sleep(2000)
       const output = extractOutput(io.capture(true), spec)
@@ -159,7 +182,7 @@ export async function runRelay(
       await io.sleep(3000)
       for (let waited = 3000; waited < compactTimeoutMs; waited += 3000) {
         if (paneState(io.capture(false)) === 'ready') {
-          return { status: 'done', output: extractOutput(io.capture(true), spec) }
+          return { status: 'done', output: extractOutput(io.capture(true), spec, seenEchoes) }
         }
         await io.sleep(3000)
       }
