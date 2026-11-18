@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.11.0
+
+### Added
+
+- **Terminal commands from Telegram**: `/clear`, `/compact [instructions]`, `/context`, `/cost`, `/model <name>`, `/effort <level>` and `/stop` sent by a DM-allowlisted user never reach Claude. The server types them into its session's tmux pane (literal text, then two Enters) and replies with the result: the `/context` breakdown, the `/cost` panel (then closes it with Esc), the model or effort confirmation, `✅ Compacted` once the spinner clears, `🧹 Context cleared`. No model turn is spent, so they work at a usage limit or with a full context. Refused while a turn runs or a dialog covers the prompt (the reply shows the pane tail). The allowlist lives in `relay.ts`; pickers, `/fast` (its dialog toggles on Enter), and access, permission and plugin commands stay out. Replaces the external `telegram-relay` skill.
+- With `"commands": { "sync": true }`, the synced menu lists `/stop`, `/clear`, `/compact`, `/context`, `/cost` first, so a skill can't take those names.
+
 ## v2.10.0
 
 ### Added
