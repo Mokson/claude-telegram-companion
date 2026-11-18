@@ -9,7 +9,8 @@
 //  - dialog: opens a panel that waits for Esc (/cost)
 //  - compact: runs for a while behind the spinner, then prints a result
 //  - clear: wipes the conversation and prints nothing worth sending back
-export type RelayMode = 'inline' | 'dialog' | 'compact' | 'clear'
+//  - stop: not typed; the server interrupts the running turn with Esc
+export type RelayMode = 'inline' | 'dialog' | 'compact' | 'clear' | 'stop'
 export type RelaySpec = { command: string; mode: RelayMode }
 
 // Allowlist. Add a command only after checking in the terminal that it ends on
@@ -24,7 +25,7 @@ const MAX_COMPACT_ARGS = 500
 // Parse a message into a relay spec, or null when it is not an allowlisted
 // built-in. `/cmd@bot` is accepted only for this bot.
 export function parseRelayCommand(text: string, botUsername: string): RelaySpec | null {
-  if (/[\x00-\x1f\x7f]/.test(text)) return null
+  if (/[\x00-\x1f\x7f-\x9f\p{Zl}\p{Zp}]/u.test(text)) return null
   const m = /^\/([a-z]+)(?:@(\w+))?(?: +(.*))?$/i.exec(text.trim())
   if (!m) return null
   const [, rawName, at, rawArgs] = m
@@ -32,6 +33,7 @@ export function parseRelayCommand(text: string, botUsername: string): RelaySpec 
   const name = rawName!.toLowerCase()
   const args = rawArgs?.trim() ?? ''
 
+  if (name === 'stop') return args ? null : { command: '/stop', mode: 'stop' }
   if (name in SIMPLE) return args ? null : { command: `/${name}`, mode: SIMPLE[name]! }
   if (name === 'compact') {
     if (args.length > MAX_COMPACT_ARGS) return null
@@ -43,10 +45,19 @@ export function parseRelayCommand(text: string, botUsername: string): RelaySpec 
 
 const BORDER_RE = /^─{10,}/
 const DIALOG_TOP_RE = /^▔{10,}/
-const BUSY_RE = /esc to interrupt|Compacting/i
+const BUSY_RE = /esc to interrupt|Compacting conversation/i
 
 function lines(screen: string): string[] {
   return screen.split('\n').map(l => l.trimEnd()).filter(l => l.trim())
+}
+
+// A spinner row, not an echoed prompt or a line of output that quotes the words.
+function isSpinner(row: string): boolean {
+  return !/^\s*[❯⎿]/.test(row) && BUSY_RE.test(row)
+}
+
+function dialogOpen(screen: string): boolean {
+  return lines(screen).some(r => DIALOG_TOP_RE.test(r))
 }
 
 // Index of the empty-or-not input prompt line, framed by borders, near the
@@ -61,7 +72,7 @@ function promptIndex(rows: string[]): number {
 // Whether the session can take a typed command right now.
 export function paneState(screen: string): 'ready' | 'busy' | 'blocked' {
   const rows = lines(screen)
-  if (rows.slice(-12).some(r => BUSY_RE.test(r))) return 'busy'
+  if (rows.slice(-12).some(isSpinner)) return 'busy'
   return promptIndex(rows) >= 0 ? 'ready' : 'blocked'
 }
 
@@ -110,6 +121,7 @@ export async function runRelay(
   onStarted?: () => void,
   compactTimeoutMs = 10 * 60_000,
 ): Promise<RelayResult> {
+  if (spec.mode === 'stop') throw new Error('/stop is handled by the server, not typed')
   const state = paneState(io.capture(false))
   if (state !== 'ready') return { status: state }
 
@@ -133,12 +145,13 @@ export async function runRelay(
       await io.sleep(2000)
       const output = extractOutput(io.capture(true), spec)
       // An Esc that lands while the panel is still loading is ignored, so
-      // retry until the prompt is back. Never press it on a ready prompt: a
-      // double Esc there opens the rewind menu.
+      // press it again only while the panel is still on screen. Anything else
+      // (a ready prompt, a turn that started meanwhile) must not get an Esc:
+      // it opens the rewind menu or interrupts the turn.
       for (let tries = 0; tries < 4; tries++) {
         io.sendKeys('Escape')
         await io.sleep(700)
-        if (paneState(io.capture(false)) === 'ready') break
+        if (!dialogOpen(io.capture(false))) break
       }
       return { status: 'done', output }
     }

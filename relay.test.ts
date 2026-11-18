@@ -43,6 +43,13 @@ describe('parseRelayCommand', () => {
   test('@mention of this bot is accepted, another bot is not', () => {
     expect(parseRelayCommand('/clear@MyBot', 'mybot')).toEqual({ command: '/clear', mode: 'clear' })
     expect(parseRelayCommand('/clear@OtherBot', 'mybot')).toBeNull()
+    expect(parseRelayCommand('/stop@MyBot', 'mybot')).toEqual({ command: '/stop', mode: 'stop' })
+    expect(parseRelayCommand('/stop@OtherBot', 'mybot')).toBeNull()
+  })
+
+  test('C1 controls and line separators are refused', () => {
+    expect(parseRelayCommand('/compact a\u009bb', 'bot')).toBeNull()
+    expect(parseRelayCommand('/compact a b', 'bot')).toBeNull()
   })
 
   test('pickers, unknown and dangerous commands are refused', () => {
@@ -65,6 +72,11 @@ describe('paneState', () => {
     expect(paneState(EFFORT_SCREEN)).toBe('ready')
     expect(paneState(BUSY_SCREEN)).toBe('busy')
     expect(paneState(COST_SCREEN)).toBe('blocked')
+  })
+
+  test('busy words in an echo or in output are not a spinner', () => {
+    const screen = ['❯ /compact keep Compacting conversation notes', '  ⎿  Compacted; esc to interrupt was quoted', ...prompt()].join('\n')
+    expect(paneState(screen)).toBe('ready')
   })
 })
 
@@ -123,6 +135,12 @@ describe('runRelay', () => {
     const { io, sent } = fakeIO([EFFORT_SCREEN, COST_SCREEN, COST_SCREEN, EFFORT_SCREEN])
     await runRelay({ command: '/cost', mode: 'dialog' }, io)
     expect(sent.filter(k => k === 'Escape')).toHaveLength(2)
+  })
+
+  test('no further Esc once the panel is gone, even if a turn started', async () => {
+    const { io, sent } = fakeIO([EFFORT_SCREEN, COST_SCREEN, BUSY_SCREEN])
+    await runRelay({ command: '/cost', mode: 'dialog' }, io)
+    expect(sent.filter(k => k === 'Escape')).toHaveLength(1)
   })
 
   test('the ⎿ marker with a no-break space is stripped', () => {
