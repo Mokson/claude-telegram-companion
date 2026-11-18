@@ -105,13 +105,6 @@ describe('extractOutput', () => {
     expect(extractOutput(screen, { command: '/model sonnet', mode: 'inline' })).toBe('Set model to Sonnet 5.5')
   })
 
-  test("an earlier run's echo is not taken for the new run's output", () => {
-    const old = ['❯ /model sonnet', '  ⎿  Set model to Sonnet 5.5', ...prompt()].join('\n')
-    const spec = { command: '/model sonnet', mode: 'inline' } as const
-    expect(extractOutput(old, spec, 1)).toBeUndefined()
-    const fresh = ['❯ /model sonnet', '  ⎿  Set model to Sonnet 5.5', '❯ /model sonnet', '  ⎿  Kept model as Sonnet 5.5', ...prompt()].join('\n')
-    expect(extractOutput(fresh, spec, 1)).toBe('Kept model as Sonnet 5.5')
-  })
 
   test('/model opus does not match an echo of /model opusplan', () => {
     const screen = ['❯ /model opusplan', '  ⎿  Set model to Opus Plan', ...prompt()].join('\n')
@@ -131,6 +124,34 @@ describe('runRelay', () => {
     }
     return { io, sent }
   }
+
+  test('inline output waits until it stops changing, in a grown pane that is restored', async () => {
+    const half = ['❯ /context', '  ⎿  Context usage', ...prompt()].join('\n')
+    const full = ['❯ /context', '  ⎿  Context usage', '     Skills: 9k', ...prompt()].join('\n')
+    const { io, sent } = fakeIO([EFFORT_SCREEN, EFFORT_SCREEN, half, full, full])
+    io.grow = () => { sent.push('grow'); return () => { sent.push('restore') } }
+    const r = await runRelay({ command: '/context', mode: 'inline' }, io)
+    expect(r).toEqual({ status: 'done', output: 'Context usage\n     Skills: 9k' })
+    expect(sent[0]).toBe('grow')
+    expect(sent.at(-1)).toBe('restore')
+  })
+
+  test("an earlier run's output is not sent, even when the full screen scrolls its echo off", async () => {
+    // A full screen: the new echo pushes the oldest row off, so echo counts stay level.
+    const old = ['❯ /model sonnet', '  ⎿  Set model (old run)', '❯ /model sonnet', '  ⎿  Set model (older run)', ...prompt()].join('\n')
+    const scrolled = ['  ⎿  Set model (old run)', '❯ /model sonnet', '  ⎿  Set model (older run)', '❯ /model sonnet', '  ⎿  Set model (this run)', ...prompt()].join('\n')
+    const { io } = fakeIO([old, old, old, old, scrolled, scrolled])
+    const r = await runRelay({ command: '/model sonnet', mode: 'inline' }, io)
+    expect(r).toEqual({ status: 'done', output: 'Set model (this run)' })
+  })
+
+  test('the pane is restored even when typing fails', async () => {
+    const { io, sent } = fakeIO([EFFORT_SCREEN])
+    io.sendText = () => { throw new Error('tmux gone') }
+    io.grow = () => () => { sent.push('restore') }
+    await expect(runRelay({ command: '/context', mode: 'inline' }, io)).rejects.toThrow('tmux gone')
+    expect(sent).toEqual(['restore'])
+  })
 
   test('a busy pane gets no keys', async () => {
     const { io, sent } = fakeIO([BUSY_SCREEN])

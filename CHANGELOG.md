@@ -1,5 +1,13 @@
 # Changelog
 
+## v2.11.2
+
+### Fixed
+
+- **`/context` "no output captured" in a short pane**: Claude Code runs on tmux's alternate screen, where tmux keeps no scrollback, so output taller than the pane (the 24-row keepalive session versus a ~35-row `/context`) had its echo scrolled off before the capture. For inline and panel commands the relay now makes the window 150 rows tall, which makes Claude Code redraw the output in full, then restores the height and unsets `window-size` so the window follows attached clients again.
+- **Repeated commands on a full screen**: v2.11.1 told a new run from an old one by counting echoes, which stays level when the oldest echo scrolls off as the new one appears. The relay now waits until the transcript above the prompt changes, then reads under the newest echo once two reads agree.
+- A pane caught mid-redraw (just resized, a panel just closed) is given two seconds before the relay refuses it as blocked.
+
 ## v2.11.1
 
 ### Fixed
