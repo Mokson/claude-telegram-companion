@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.11.3
+
+### Changed
+
+- The 🫡 reaction on a follow-up sent while a turn is running now lands after a random 1.5-3.5 s instead of instantly, so it reads less automated.
+
 ## v2.11.2
 
 ### Fixed

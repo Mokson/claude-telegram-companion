@@ -1304,6 +1304,9 @@ const KEEPALIVE_SCRIPT = join(import.meta.dir, 'scripts', 'telegram-typing-keepa
 // leaves a stale context — and possibly a lingering daemon — that must not be
 // reused indefinitely.
 const QUEUED_REACTION = '🫡'
+// An instant 🫡 reads as automated; a person glances over first. Random
+// 1.5-3.5 s so repeated follow-ups don't land on the same beat.
+const QUEUED_REACTION_DELAY_MS = () => 1500 + Math.random() * 2000
 
 type ActiveContext = { chat_id?: string; session_id?: string; timestamp?: number; tmux_pane?: string }
 
@@ -2105,11 +2108,13 @@ async function handleInbound(
   // swallow.
   const reaction = queued ? QUEUED_REACTION : access.ackReaction
   if (reaction && msgId != null) {
-    void bot.api
+    const react = () => void bot.api
       .setMessageReaction(chat_id, msgId, [
         { type: 'emoji', emoji: reaction as ReactionTypeEmoji['emoji'] },
       ])
       .catch(() => {})
+    if (queued) setTimeout(react, QUEUED_REACTION_DELAY_MS())
+    else react()
   }
 
   const imagePath = downloadImage ? await downloadImage() : undefined
