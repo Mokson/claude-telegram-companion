@@ -1,5 +1,16 @@
 # Changelog
 
+## v3.1.0
+
+### Changed
+
+- **Smaller context footprint**: the server's instructions and tool schemas went from about 2.7K tokens to about 1.1K in a channel session. Each fact now lives once: behaviour in the instructions, parameter mechanics in the schemas. Sessions without the channel loaded (they never receive a message) get a one-line instruction instead of the channel guide, about 750 tokens in all. The tool list and instructions live in `surface.ts`; `surface.test.ts` holds the size budget.
+- `format` defaults to `markdown` on `reply` and `edit_message`, so calls no longer need to pass it. `text` keeps plain output.
+
+### Removed
+
+- The `ack` tool. Progress and typing have started on their own since v2.6.0.
+
 ## v3.0.0
 
 ### Breaking

@@ -10,7 +10,8 @@ Standalone Telegram channel for [Claude Code](https://claude.com/code). Self-hos
 - Pairing-based access control with allowlists, group, and channel policies
 - Atomic poll lock with follower mode for multi-session setups
 - Persistent inbound queue with replay on restart
-- Rich messages via `format: "markdown"` (Bot API 10.1+, 32K): headers, lists, compact tables, `<details>`, expandable quotes via `>!`, spoilers, custom emoji; MarkdownV2 fallback with automatic escaping
+- Lean MCP surface: about 1.1K tokens of instructions and tool schemas in a channel session, about 750 in sessions without the channel (budget held by `surface.test.ts`)
+- Rich messages from markdown, the default format (Bot API 10.1+, 32K): headers, lists, compact tables, `<details>`, expandable quotes via `>!`, spoilers, custom emoji; MarkdownV2 fallback with automatic escaping
 - Files embedded in the reply's rich message (photos/videos as a collage, documents and audio as media blocks); separate messages on the fallback path
 - Inbound formatting preserved: user spoilers, quotes, code, and links are reconstructed from Telegram entities before reaching Claude
 - Inline keyboards (Bot API 9.4 styles / custom emoji) that stay visible, disabled, with the answer marked ✓ after a tap; buttons inside the rich message text (`[Label](tg://button?data=..)`), disabled the same way; `force_reply`; reply-to context (including rich messages and the quoted part), forum supergroup topics, channel posts
