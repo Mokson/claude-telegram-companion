@@ -227,8 +227,8 @@ if (MODE === 'interrupt') {
 
 // Pick the progress slot this hook belongs to: the one this session already
 // claimed, else an unclaimed one whose inbound message is in this session's
-// transcript (most recent first). A Telegram tool naming a topic (ack/react
-// open a context) falls back to that topic's slot. Returns whether the slot
+// transcript (most recent first). A Telegram tool naming a topic (react
+// opens a context) falls back to that topic's slot. Returns whether the slot
 // Handlers still check session ownership before touching the slot's state.
 function selectSlot(data) {
   const sessionId = data.session_id || '';
@@ -538,22 +538,6 @@ function handlePostToolUse(data, toolName, toolInput) {
     if (current && !current.session_id && !isStale(current)
       && !sessionOwnsChannel(data.transcript_path || '', current)) process.exit(0);
     const thread = inThread({ message_thread_id: toolInput.message_thread_id || (current && current.message_thread_id) });
-
-    // ack → establish context and immediately start progress
-    if (action === 'ack') {
-      killDaemon();
-      try { fs.unlinkSync(P.LOG_FILE); } catch {}
-      try { fs.unlinkSync(P.CURRENT_TOOL_FILE); } catch {}
-      const ctx = claimContext({ chat_id: chatId, ...thread, timestamp: now(), started_at: now() }, sessionId);
-      if (statusUpdatesEnabled() && getToken() && useDraftFor(chatId)) {
-        ctx.progress_msg_id = 'draft';
-        writeActive(ctx);
-        spawnDaemon(ctx, 'draft');
-      } else {
-        writeActive(ctx);
-      }
-      process.exit(0);
-    }
 
     // react → establish context (legacy, used for explicit emoji reactions)
     if (action === 'react') {
