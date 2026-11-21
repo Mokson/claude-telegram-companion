@@ -13,7 +13,9 @@ Standalone Telegram channel for [Claude Code](https://claude.com/code). Self-hos
 - Rich messages via `format: "markdown"` (Bot API 10.1+, 32K): headers, lists, compact tables, `<details>`, expandable quotes via `>!`, spoilers, custom emoji; MarkdownV2 fallback with automatic escaping
 - Files embedded in the reply's rich message (photos/videos as a collage, documents and audio as media blocks); separate messages on the fallback path
 - Inbound formatting preserved: user spoilers, quotes, code, and links are reconstructed from Telegram entities before reaching Claude
-- Inline keyboards (Bot API 9.4 styles / custom emoji) that stay visible, disabled, with the answer marked ✓ after a tap; reply-to context, forum supergroup topics, channel posts
+- Inline keyboards (Bot API 9.4 styles / custom emoji) that stay visible, disabled, with the answer marked ✓ after a tap; buttons inside the rich message text (`[Label](tg://button?data=..)`), disabled the same way; `force_reply`; reply-to context (including rich messages and the quoted part), forum supergroup topics, channel posts
+- Per-session DM topics: with topic mode enabled for the bot in @BotFather (getMe reports `has_topics_enabled`), each channel session gets its own topic in the private chat, named after its project directory (`app`, `app (2)` for a second session). A message in a topic reaches that session; progress, Stop and replies stay in it. A topic whose session is gone gets a "session isn't running" notice and the message waits in its inbox for the next session on that project. Main-chat messages still go to the polling leader
+- Times in notices (usage-limit reset, login expiry) render in the reader's local time zone (Bot API date_time entities)
 - Live progress UX: persistent tool-call tracker edited in place (quiet blockquote, silent send) that collapses into an expandable summary when the turn ends; optional draft streaming with a native thinking block; opt-in per-chat skill command menus; typing keepalive
 - `⏹ Stop` button on the progress message (and native Stop on drafts) interrupts the running Claude turn — requires the session to run in tmux
 - Terminal commands from Telegram: `/stop`, `/clear`, `/compact [instructions]`, `/context`, `/cost`, `/usage`, `/model <name>`, `/effort <level>` are typed into the session's tmux pane by the server, without a Claude turn, so they also work at a usage limit or with a full context. Output (`/context`, `/cost` and `/usage` panels, model and effort confirmations) comes back to the chat. Refused while a turn is running or a terminal dialog is open. DM-allowlisted senders only
@@ -69,6 +71,7 @@ Optional environment variables:
 | `TELEGRAM_STATE_DIR` | Override the state dir (default `$CLAUDE_CONFIG_DIR/channels/telegram/`, else `~/.claude/channels/telegram/`) |
 | `TELEGRAM_PLUGIN_HEARTBEAT` | Path to write a unix-timestamp heartbeat for external watchdogs |
 | `TELEGRAM_STUCK_AFTER_SEC` | Seconds before an unanswered message triggers the stuck-session notice with the tmux pane tail (default `180`, `0` disables) |
+| `TELEGRAM_SESSION_TOPICS=0` | Turn off per-session DM topics even when the bot has topic mode on |
 | `TELEGRAM_ACCESS_MODE=static` | Snapshot access at boot (no runtime mutation) |
 | `TELEGRAM_AUTH_EXPIRES_AT` | Claude Code login expiry (e.g. `2027-10-09`), for a `claude setup-token` token. Allowlisted users get a DM from 3 days out. Without it, the OAuth refresh token's expiry in `.credentials.json` is used |
 

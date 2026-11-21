@@ -315,6 +315,142 @@ export function embedRichMedia(markdown: string, media: RichMediaRef[]): string 
   return blocks.length > 0 ? `${out.trimEnd()}\n\n${blocks.join('\n\n')}` : out
 }
 
+// Buttons inside a rich message (Bot API 10.3 <tg-button>/<tg-button-row>).
+// The model writes [Label](tg://button?data=<payload>&style=<style>); a line
+// holding only such links becomes one button row, a link inside a paragraph
+// an inline button. Fenced code is left alone. `prefix` namespaces the
+// callback data (the server's `usr:`); Telegram caps it at 64 bytes.
+export type RichButton = { text: string; data: string; style?: string }
+const BUTTON_LINK_RE = /\[([^\]\n]+)\]\(tg:\/\/button\?([^)\s]*)\)/g
+const BUTTON_STYLES = new Set(['primary', 'success', 'danger', 'link'])
+
+function parseButtonLink(label: string, query: string, prefix: string): RichButton {
+  const params = new URLSearchParams(query)
+  const data = params.get('data')
+  if (!data) throw new Error(`button "${label}" needs a data parameter: [${label}](tg://button?data=...)`)
+  const full = prefix + data
+  if (Buffer.byteLength(full, 'utf8') > 64) {
+    throw new Error(`button data too long: ${data} (max ${64 - Buffer.byteLength(prefix, 'utf8')} bytes UTF-8)`)
+  }
+  const style = params.get('style') ?? undefined
+  return { text: label, data: full, ...(style && BUTTON_STYLES.has(style) ? { style } : {}) }
+}
+
+function buttonTag(b: RichButton): string {
+  const attr = (s: string) => escapeHtml(s).replace(/"/g, '&quot;')
+  return `<tg-button type="callback_data" data="${attr(b.data)}"${b.style ? ` style="${b.style}"` : ''}>${escapeHtml(b.text)}</tg-button>`
+}
+
+function mapOutsideFences(input: string, fn: (s: string) => string): string {
+  const fenceRe = /(```|~~~)[^\n]*\n?[\s\S]*?(?:\1|$)/g
+  let out = ''
+  let last = 0
+  let m: RegExpExecArray | null
+  while ((m = fenceRe.exec(input)) !== null) {
+    out += fn(input.slice(last, m.index)) + m[0]
+    last = m.index + m[0].length
+  }
+  return out + fn(input.slice(last))
+}
+
+// Rich path: button links → <tg-button> tags. Returns the buttons too, so the
+// caller knows the message carries callback buttons.
+// Button links in a line, skipping inline code spans (`...`), which show
+// the syntax literally.
+function replaceButtons(line: string, fn: (label: string, query: string) => string): string {
+  return line.split(/(`[^`\n]*`)/).map((part, i) =>
+    i % 2 === 1 ? part : part.replace(BUTTON_LINK_RE, (_, label: string, query: string) => fn(label, query)),
+  ).join('')
+}
+
+export function expandRichButtons(markdown: string, prefix: string): { markdown: string; buttons: RichButton[] } {
+  const buttons: RichButton[] = []
+  const out = mapOutsideFences(markdown, text => text.split('\n').map(line => {
+    if (!line.includes('tg://button?')) return line
+    const onlyButtons = replaceButtons(line, () => '').trim() === '' && !line.includes('`')
+    const tags: string[] = []
+    const replaced = replaceButtons(line, (label, query) => {
+      const b = parseButtonLink(label, query, prefix)
+      buttons.push(b)
+      const tag = buttonTag(b)
+      tags.push(tag)
+      return tag
+    })
+    return onlyButtons ? `<tg-button-row>${tags.join('')}</tg-button-row>` : replaced
+  }).join('\n'))
+  return { markdown: out, buttons }
+}
+
+// MarkdownV2 fallback: no in-text buttons, so pull them out (a line left
+// empty is dropped) and let the caller attach them as an inline keyboard.
+export function stripRichButtons(markdown: string, prefix: string): { markdown: string; buttons: RichButton[] } {
+  const buttons: RichButton[] = []
+  const out = mapOutsideFences(markdown, text => text.split('\n').flatMap(line => {
+    if (!line.includes('tg://button?')) return [line]
+    const rest = replaceButtons(line, (label, query) => {
+      buttons.push(parseButtonLink(label, query, prefix))
+      return ''
+    })
+    return rest.trim() === '' ? [] : [rest]
+  }).join('\n'))
+  return { markdown: out, buttons }
+}
+
+// After a tap: every callback button in the sent markdown becomes a disabled
+// one, the chosen button marked ✓ and keeping its style.
+export function disableRichButtons(markdown: string, chosenData: string): string {
+  return markdown.replace(
+    /<tg-button type="callback_data" data="([^"]*)"( style="[a-z]+")?>([\s\S]*?)<\/tg-button>/g,
+    (_, data: string, style: string | undefined, label: string) => {
+      const chosen = data.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&') === chosenData
+      return chosen
+        ? `<tg-button type="disabled"${style ?? ''}>✓ ${label}</tg-button>`
+        : `<tg-button type="disabled">${label}</tg-button>`
+    },
+  )
+}
+
+// Plain text of a received rich message or quote (RichMessage blocks,
+// RichText trees). Blocks are separated by newlines; inline runs concatenate.
+// Walks only the fields that carry visible text, so URLs, ids and callback
+// data never leak in.
+export function richToPlain(node: unknown): string {
+  if (node == null) return ''
+  if (typeof node === 'string') return node
+  if (Array.isArray(node)) {
+    // An array of blocks reads as lines; an array of inline runs as one line.
+    const isBlocks = node.some(n => n && typeof n === 'object' && !Array.isArray(n) && 'type' in n && BLOCKISH.has((n as { type: string }).type))
+    return node.map(richToPlain).filter(s => s !== '').join(isBlocks ? '\n' : '')
+  }
+  if (typeof node !== 'object') return ''
+  const o = node as Record<string, unknown>
+  if (Array.isArray(o.blocks) && !('type' in o) && !('label' in o)) return richToPlain(o.blocks) // RichMessage
+  switch (o.type) {
+    case 'list':
+      return (o.items as Array<Record<string, unknown>> | undefined ?? [])
+        .map(it => `${it.label ? `${it.label} ` : '- '}${richToPlain(it.blocks)}`).join('\n')
+    case 'table':
+      return (o.cells as unknown[][] | undefined ?? [])
+        .map(row => row.map(c => richToPlain((c as Record<string, unknown>)?.text)).join(' | ')).join('\n')
+    case 'details':
+      return [richToPlain(o.summary), richToPlain(o.blocks)].filter(Boolean).join('\n')
+    case 'buttons':
+      return (o.buttons as Array<Record<string, unknown>> | undefined ?? []).map(b => `[${richToPlain(b.text)}]`).join(' ')
+    case 'button':
+      return `[${richToPlain((o.button as Record<string, unknown> | undefined)?.text)}]`
+  }
+  const parts: string[] = []
+  for (const k of ['text', 'blocks', 'caption', 'credit']) {
+    if (k in o) parts.push(richToPlain(o[k]))
+  }
+  return parts.filter(Boolean).join(BLOCKISH.has(String(o.type)) && 'blocks' in o ? '\n' : '')
+}
+const BLOCKISH = new Set([
+  'paragraph', 'heading', 'pre', 'footer', 'divider', 'list', 'blockquote', 'expandable_blockquote',
+  'pullquote', 'table', 'details', 'buttons', 'thinking', 'mathematical_expression', 'collage',
+  'slideshow', 'map', 'photo', 'video', 'animation', 'audio', 'document', 'voice_note',
+])
+
 // Inbound rich text: Telegram delivers formatting out-of-band as message
 // entities (offset/length over UTF-16 code units, which line up with JS string
 // indices). Reconstruct a markdown-ish view so Claude sees the user's bold,
