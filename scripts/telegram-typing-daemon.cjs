@@ -10,14 +10,16 @@
 // Reads completed steps from /tmp/telegram-progress.jsonl
 // Reads current in-progress tool from /tmp/telegram-current-tool.txt
 //
-// Usage: node telegram-typing-daemon.js <chat_id> <message_id|"draft">
-// Stop:  write /tmp/telegram-typing-stop, or delete telegram-active.json
-// PID:   written to /tmp/telegram-typing-pid
+// Usage: node telegram-typing-daemon.js <chat_id> <message_id|"draft"> [slot] [thread_id]
+// Stop:  write /tmp/telegram-typing-stop<slot>, or delete telegram-active<slot>.json
+// PID:   written to /tmp/telegram-typing-pid<slot>
+// slot is "" for the main chat or "-t<chat>_<id>" for a topic, whose
+// id (thread_id) every message-creating call must carry.
 
 const https = require('https');
 const fs = require('fs');
 const {
-  PID_FILE, STOP_FILE, ACTIVE_FILE, STOP_MARKUP,
+  P, useSlot, SLOT_RE, STOP_MARKUP,
   readToken, readProgressLog, readCurrentTool,
   formatProgress, formatProgressMarkdown,
 } = require('./telegram-shared.cjs');
@@ -30,6 +32,11 @@ const DRAFT_STOP = { can_stop: true, keep_on_stop: true };
 const chatId = process.argv[2];
 const messageArg = process.argv[3] || null;
 if (!chatId) process.exit(1);
+const slotArg = process.argv[4] || '';
+if (!SLOT_RE.test(slotArg)) process.exit(1);
+useSlot(slotArg);
+const threadNum = Number(process.argv[5]);
+const THREAD = Number.isInteger(threadNum) && threadNum > 0 ? { message_thread_id: threadNum } : {};
 
 // "draft" sentinel → stream via sendRichMessageDraft (preferred) or
 // sendMessageDraft (fallback). Otherwise it's a real message_id to edit.
@@ -41,7 +48,7 @@ let messageId = draftMode ? null : messageArg;
 const token = readToken();
 if (!token) process.exit(1);
 
-fs.writeFileSync(PID_FILE, String(process.pid));
+fs.writeFileSync(P.PID_FILE, String(process.pid));
 
 // Long enough to cover extended autonomous tasks; turn teardown normally
 // stops the daemon much earlier via STOP_FILE or active-file removal.
@@ -55,20 +62,20 @@ let lastEditAt = 0;
 
 function shouldStop() {
   if (Date.now() - startedAt > MAX_DURATION_MS) return true;
-  if (!fs.existsSync(ACTIVE_FILE)) return true;
-  return fs.existsSync(STOP_FILE);
+  if (!fs.existsSync(P.ACTIVE_FILE)) return true;
+  return fs.existsSync(P.STOP_FILE);
 }
 
 function cleanup() {
-  try { fs.unlinkSync(PID_FILE); } catch {}
-  try { fs.unlinkSync(STOP_FILE); } catch {}
+  try { fs.unlinkSync(P.PID_FILE); } catch {}
+  try { fs.unlinkSync(P.STOP_FILE); } catch {}
 }
 
 // --- Typing ---
 
 function sendTyping() {
   if (shouldStop()) { cleanup(); process.exit(0); }
-  telegramPost('sendChatAction', { chat_id: chatId, action: 'typing' });
+  telegramPost('sendChatAction', { chat_id: chatId, ...THREAD, action: 'typing' });
 }
 
 // --- Progress ---
@@ -103,6 +110,7 @@ function updateProgress() {
       if (mdText) {
         telegramPostResult('sendRichMessageDraft', {
           chat_id: Number(chatId),
+          ...THREAD,
           draft_id: DRAFT_ID,
           rich_message: { markdown: mdText },
           ...DRAFT_STOP,
@@ -112,6 +120,7 @@ function updateProgress() {
             // Immediately retry with plain sendMessageDraft
             telegramPostResult('sendMessageDraft', {
               chat_id: Number(chatId),
+              ...THREAD,
               draft_id: DRAFT_ID,
               text,
               parse_mode: 'HTML',
@@ -131,6 +140,7 @@ function updateProgress() {
     // Fallback: plain sendMessageDraft with HTML
     telegramPostResult('sendMessageDraft', {
       chat_id: Number(chatId),
+      ...THREAD,
       draft_id: DRAFT_ID,
       text,
       parse_mode: 'HTML',
@@ -157,6 +167,7 @@ function updateProgress() {
     // Fell back from draft mode with no message yet — create one to edit.
     telegramPostResult('sendMessage', {
       chat_id: chatId,
+      ...THREAD,
       text,
       parse_mode: 'HTML',
       disable_notification: true,

@@ -32,7 +32,7 @@ const path = require('path');
 const https = require('https');
 const { spawn, execFileSync } = require('child_process');
 const {
-  LOG_FILE, PID_FILE, STOP_FILE, CURRENT_TOOL_FILE, ACTIVE_FILE, STATE_DIR, STOP_MARKUP,
+  P, useSlot, slotFor, SLOT_RE, listActiveSlots, STATE_DIR, STOP_MARKUP,
   readToken, escapeHtml,
   readProgressLog, writeProgressLog, readCurrentTool,
   formatProgress, formatProgressMarkdown, formatProgressFinalHtml,
@@ -87,19 +87,20 @@ function useDraftFor(chatId) {
 // (quiet HTML blockquote) that the daemon then edits in place. Draft mode
 // streams an ephemeral draft that auto-clears on the real reply.
 function beginProgress(ctx, entries, currentTool) {
-  try { fs.unlinkSync(STOP_FILE); } catch {}
+  try { fs.unlinkSync(P.STOP_FILE); } catch {}
   if (!ctx.started_at) ctx.started_at = now();
   if (useDraftFor(ctx.chat_id)) {
     ctx.progress_msg_id = 'draft';
     ctx.timestamp = now();
     writeActive(ctx);
-    spawnDaemon(ctx.chat_id, 'draft');
+    spawnDaemon(ctx, 'draft');
     process.exit(0);
   }
   const text = formatProgress(entries, currentTool);
   if (!text || !getToken()) process.exit(0);
   telegramPostSync('sendMessage', {
     chat_id: ctx.chat_id,
+    ...inThread(ctx),
     text,
     parse_mode: 'HTML',
     disable_notification: true,
@@ -109,7 +110,7 @@ function beginProgress(ctx, entries, currentTool) {
       ctx.progress_msg_id = String(msgId);
       ctx.timestamp = now();
       writeActive(ctx);
-      spawnDaemon(ctx.chat_id, ctx.progress_msg_id);
+      spawnDaemon(ctx, ctx.progress_msg_id);
     }
     process.exit(0);
   });
@@ -169,7 +170,7 @@ function finalizeAndCleanup(stopped = false, retried = false) {
   // No reply_markup: the final collapse drops the Stop button.
   if (isDraft) {
     telegramPostSync('sendMessage', {
-      chat_id: ctx.chat_id, text, parse_mode: 'HTML', disable_notification: true,
+      chat_id: ctx.chat_id, ...inThread(ctx), text, parse_mode: 'HTML', disable_notification: true,
     }, done);
     return;
   }
@@ -217,8 +218,41 @@ function getToken() {
   return _token;
 }
 
-if (MODE === 'interrupt') finalizeAndCleanup(true);
-else readHookInput();
+// The interrupt spawner (server.ts) names the slot; hooks find theirs.
+if (MODE === 'interrupt') {
+  const slot = process.argv[3] || '';
+  if (SLOT_RE.test(slot)) useSlot(slot);
+  finalizeAndCleanup(true);
+} else readHookInput();
+
+// Pick the progress slot this hook belongs to: the one this session already
+// claimed, else an unclaimed one whose inbound message is in this session's
+// transcript (most recent first). A Telegram tool naming a topic (ack/react
+// open a context) falls back to that topic's slot. Returns whether the slot
+// Handlers still check session ownership before touching the slot's state.
+function selectSlot(data) {
+  const sessionId = data.session_id || '';
+  const transcriptPath = data.transcript_path || '';
+  const found = listActiveSlots().map(slot => {
+    useSlot(slot);
+    return { slot, ctx: readActive() };
+  }).filter(x => x.ctx && x.ctx.chat_id)
+    .sort((a, b) => (b.ctx.timestamp || 0) - (a.ctx.timestamp || 0));
+  // Newest first: a live slot of ours, or one whose message we received. A
+  // stale slot of ours (a turn that ended without Stop) doesn't hold us back.
+  const pick = found.find(x => sessionId && x.ctx.session_id === sessionId
+    ? !isStale(x.ctx)
+    : !x.ctx.session_id && sessionOwnsChannel(transcriptPath, x.ctx));
+  if (pick) { useSlot(pick.slot); return; }
+  const ti = data.tool_input || {};
+  useSlot(slotFor(ti.chat_id, ti.message_thread_id));
+}
+
+// Topic of the slot's chat, for every send that creates a message.
+function inThread(ctx) {
+  const n = Number(ctx && ctx.message_thread_id);
+  return Number.isInteger(n) && n > 0 ? { message_thread_id: n } : {};
+}
 
 function readHookInput() {
   let input = '';
@@ -233,6 +267,7 @@ function readHookInput() {
       const toolInput = data.tool_input || {};
       const sessionId = data.session_id || '';
       const transcriptPath = data.transcript_path || '';
+      selectSlot(data);
 
       if (MODE === 'pre') {
         handlePreToolUse(toolName, toolInput, sessionId, transcriptPath);
@@ -254,8 +289,13 @@ function readHookInput() {
 // Telegram message — otherwise every concurrent Claude session's tools would
 // pollute the trace. The receiving session provably has the <channel
 // source="telegram" chat_id="..."> block in its transcript; check the tail.
-function sessionOwnsChannel(transcriptPath, chatId) {
+// With the inbound message id recorded (the server writes it), the match is
+// exact: chat_id and message_id are adjacent in the block, and topic messages
+// share their chat's id, so the chat alone can't tell two sessions apart.
+function sessionOwnsChannel(transcriptPath, ctx) {
+  const chatId = ctx && ctx.chat_id;
   if (!transcriptPath || !chatId) return false;
+  const msgId = ctx.message_id;
   try {
     const fd = fs.openSync(transcriptPath, 'r');
     const size = fs.fstatSync(fd).size;
@@ -265,6 +305,10 @@ function sessionOwnsChannel(transcriptPath, chatId) {
     fs.closeSync(fd);
     const tail = buf.toString('utf8');
     // Transcript is JSONL, so the channel block usually appears JSON-escaped.
+    if (msgId) {
+      return tail.includes(`chat_id=\\"${chatId}\\" message_id=\\"${msgId}\\"`)
+        || tail.includes(`chat_id="${chatId}" message_id="${msgId}"`);
+    }
     return tail.includes(`chat_id=\\"${chatId}\\"`)
       || tail.includes(`chat_id="${chatId}"`);
   } catch { return false; }
@@ -282,7 +326,7 @@ function handleStop(sessionId, transcriptPath) {
   // received the message, its turn is over: drop the context, so the server's
   // stuck-session watchdog doesn't take it for a message nobody picked up.
   if (!ctx.session_id) {
-    if (sessionOwnsChannel(transcriptPath, ctx.chat_id)) cleanup();
+    if (sessionOwnsChannel(transcriptPath, ctx)) cleanup();
     process.exit(0);
   }
   // Only the session that owns the context may finalize it.
@@ -320,7 +364,7 @@ function handleStopFailure(data, sessionId, transcriptPath) {
   if (!ctx || !ctx.chat_id || isStale(ctx)) process.exit(0);
   // A turn that failed on its first API call never ran a tool, so the context
   // may still be unclaimed: accept it iff this session received the message.
-  if (ctx.session_id ? ctx.session_id !== sessionId : !sessionOwnsChannel(transcriptPath, ctx.chat_id)) {
+  if (ctx.session_id ? ctx.session_id !== sessionId : !sessionOwnsChannel(transcriptPath, ctx)) {
     process.exit(0);
   }
 
@@ -347,7 +391,7 @@ function handleStopFailure(data, sessionId, transcriptPath) {
   const label = FAILURE_LABELS[error] || `API error (${error})`;
   const text = `⚠️ <b>Can't reply: ${escapeHtml(label)}.</b>`
     + (detail ? `\n<blockquote>${escapeHtml(detail)}</blockquote>` : '');
-  telegramPostSync('sendMessage', { chat_id: ctx.chat_id, text, parse_mode: 'HTML' },
+  telegramPostSync('sendMessage', { chat_id: ctx.chat_id, ...inThread(ctx), text, parse_mode: 'HTML' },
     () => finalizeAndCleanup());
 }
 
@@ -402,7 +446,8 @@ function handlePreToolUse(toolName, toolInput, sessionId, transcriptPath) {
     const action = getTelegramAction(toolName);
     if (action === 'reply' || action === 'send') {
       const ctx = readActive();
-      if (ctx && ctx.progress_msg_id) {
+      // Another session's progress is not ours to tear down.
+      if (ctx && ctx.progress_msg_id && ctx.session_id === sessionId) {
         killDaemon();
         // Draft mode only: drafts auto-clear when the real reply arrives, so
         // the history must be persisted BEFORE reply executes. Message-mode
@@ -415,6 +460,7 @@ function handlePreToolUse(toolName, toolInput, sessionId, transcriptPath) {
             if (html && getToken()) {
               telegramPostSync('sendMessage', {
                 chat_id: ctx.chat_id,
+                ...inThread(ctx),
                 text: html,
                 parse_mode: 'HTML',
                 disable_notification: true,
@@ -437,16 +483,16 @@ function handlePreToolUse(toolName, toolInput, sessionId, transcriptPath) {
   // Auto-establish context: server wrote active file without session_id.
   // Only the session that actually received the channel message may claim it.
   if (!ctx.session_id) {
-    if (!sessionOwnsChannel(transcriptPath, ctx.chat_id)) process.exit(0);
-    try { fs.unlinkSync(LOG_FILE); } catch {}
-    try { fs.unlinkSync(CURRENT_TOOL_FILE); } catch {}
+    if (!sessionOwnsChannel(transcriptPath, ctx)) process.exit(0);
+    try { fs.unlinkSync(P.LOG_FILE); } catch {}
+    try { fs.unlinkSync(P.CURRENT_TOOL_FILE); } catch {}
     killDaemon();
     claimContext(ctx, sessionId);
     ctx.started_at = now();
     if (statusUpdatesEnabled() && getToken() && useDraftFor(ctx.chat_id)) {
       ctx.progress_msg_id = 'draft';
       writeActive(ctx);
-      spawnDaemon(ctx.chat_id, 'draft');
+      spawnDaemon(ctx, 'draft');
     } else {
       writeActive(ctx);
     }
@@ -456,7 +502,7 @@ function handlePreToolUse(toolName, toolInput, sessionId, transcriptPath) {
 
   if (!statusUpdatesEnabled()) process.exit(0);
 
-  try { fs.writeFileSync(CURRENT_TOOL_FILE, label); } catch {}
+  try { fs.writeFileSync(P.CURRENT_TOOL_FILE, label); } catch {}
 
   // Keep the context fresh while tools are starting, so a long-running tool
   // doesn't let the context go stale before its PostToolUse fires.
@@ -485,16 +531,24 @@ function handlePostToolUse(data, toolName, toolInput) {
 
     const action = getTelegramAction(toolName);
 
+    // A live turn of another session in this slot is not ours to touch, nor
+    // a fresh unclaimed context whose message another session received.
+    const current = readActive();
+    if (current && current.session_id && current.session_id !== sessionId && !isStale(current)) process.exit(0);
+    if (current && !current.session_id && !isStale(current)
+      && !sessionOwnsChannel(data.transcript_path || '', current)) process.exit(0);
+    const thread = inThread({ message_thread_id: toolInput.message_thread_id || (current && current.message_thread_id) });
+
     // ack → establish context and immediately start progress
     if (action === 'ack') {
       killDaemon();
-      try { fs.unlinkSync(LOG_FILE); } catch {}
-      try { fs.unlinkSync(CURRENT_TOOL_FILE); } catch {}
-      const ctx = claimContext({ chat_id: chatId, timestamp: now(), started_at: now() }, sessionId);
+      try { fs.unlinkSync(P.LOG_FILE); } catch {}
+      try { fs.unlinkSync(P.CURRENT_TOOL_FILE); } catch {}
+      const ctx = claimContext({ chat_id: chatId, ...thread, timestamp: now(), started_at: now() }, sessionId);
       if (statusUpdatesEnabled() && getToken() && useDraftFor(chatId)) {
         ctx.progress_msg_id = 'draft';
         writeActive(ctx);
-        spawnDaemon(chatId, 'draft');
+        spawnDaemon(ctx, 'draft');
       } else {
         writeActive(ctx);
       }
@@ -505,9 +559,9 @@ function handlePostToolUse(data, toolName, toolInput) {
     if (action === 'react') {
       if (!readActive()) {
         killDaemon();
-        try { fs.unlinkSync(LOG_FILE); } catch {}
-        try { fs.unlinkSync(CURRENT_TOOL_FILE); } catch {}
-        writeActive(claimContext({ chat_id: chatId, timestamp: now(), started_at: now() }, sessionId));
+        try { fs.unlinkSync(P.LOG_FILE); } catch {}
+        try { fs.unlinkSync(P.CURRENT_TOOL_FILE); } catch {}
+        writeActive(claimContext({ chat_id: chatId, ...thread, timestamp: now(), started_at: now() }, sessionId));
       }
       process.exit(0);
     }
@@ -539,7 +593,7 @@ function handlePostToolUse(data, toolName, toolInput) {
   // unclaimed context is claimed here iff this session received the inbound
   // message (PreToolUse normally claims first; this covers its misses).
   if (!ctx.session_id) {
-    if (!sessionOwnsChannel(data.transcript_path || '', ctx.chat_id)) process.exit(0);
+    if (!sessionOwnsChannel(data.transcript_path || '', ctx)) process.exit(0);
     claimContext(ctx, sessionId);
     if (!ctx.started_at) ctx.started_at = now();
   } else if (ctx.session_id !== sessionId) {
@@ -554,6 +608,7 @@ function handlePostToolUse(data, toolName, toolInput) {
       : JSON.stringify(toolOutput).slice(0, 200);
     telegramPostSync('sendMessage', {
       chat_id: ctx.chat_id,
+      ...inThread(ctx),
       text: `<b>Failed:</b> ${escapeHtml(errorText)}`,
       parse_mode: 'HTML',
     }, () => { cleanup(); process.exit(0); });
@@ -577,7 +632,7 @@ function handlePostToolUse(data, toolName, toolInput) {
     process.exit(0);
   }
 
-  fs.appendFileSync(LOG_FILE, JSON.stringify({
+  fs.appendFileSync(P.LOG_FILE, JSON.stringify({
     label, time: now(), status: 'done',
   }) + '\n');
   entries.push({ label, time: now(), status: 'done' });
@@ -595,8 +650,8 @@ function handlePostToolUse(data, toolName, toolInput) {
   // edited out-of-band, so only nudge real messages here.)
   if (ctx.progress_msg_id && !isDaemonAlive()) {
     if (ctx.progress_msg_id !== 'draft') editProgress(ctx);
-    try { fs.unlinkSync(STOP_FILE); } catch {}
-    spawnDaemon(ctx.chat_id, ctx.progress_msg_id);
+    try { fs.unlinkSync(P.STOP_FILE); } catch {}
+    spawnDaemon(ctx, ctx.progress_msg_id);
   }
 
   process.exit(0);
@@ -609,16 +664,16 @@ function now() { return Math.floor(Date.now() / 1000); }
 // minutes. Turn teardown is handled by the Stop hook, not staleness.
 function isStale(ctx) { return ctx.timestamp && (now() - ctx.timestamp) > 1800; }
 function readActive() {
-  try { return JSON.parse(fs.readFileSync(ACTIVE_FILE, 'utf8')); } catch { return null; }
+  try { return JSON.parse(fs.readFileSync(P.ACTIVE_FILE, 'utf8')); } catch { return null; }
 }
 function writeActive(ctx) {
-  try { fs.writeFileSync(ACTIVE_FILE, JSON.stringify(ctx)); } catch {}
+  try { fs.writeFileSync(P.ACTIVE_FILE, JSON.stringify(ctx)); } catch {}
 }
 function cleanup() {
   killDaemon();
-  try { fs.unlinkSync(ACTIVE_FILE); } catch {}
-  try { fs.unlinkSync(LOG_FILE); } catch {}
-  try { fs.unlinkSync(CURRENT_TOOL_FILE); } catch {}
+  try { fs.unlinkSync(P.ACTIVE_FILE); } catch {}
+  try { fs.unlinkSync(P.LOG_FILE); } catch {}
+  try { fs.unlinkSync(P.CURRENT_TOOL_FILE); } catch {}
 }
 
 function looksLikeError(output) {
@@ -682,24 +737,24 @@ function telegramPostFireForget(method, body) {
 
 function killDaemon() {
   try {
-    const pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
+    const pid = parseInt(fs.readFileSync(P.PID_FILE, 'utf8').trim(), 10);
     if (pid) process.kill(pid, 'SIGTERM');
   } catch {}
-  try { fs.writeFileSync(STOP_FILE, '1'); } catch {}
+  try { fs.writeFileSync(P.STOP_FILE, '1'); } catch {}
 }
 
 function isDaemonAlive() {
   try {
-    const pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
+    const pid = parseInt(fs.readFileSync(P.PID_FILE, 'utf8').trim(), 10);
     process.kill(pid, 0);
     return true;
   } catch { return false; }
 }
 
-function spawnDaemon(chatId, messageId) {
+// argv: chat id, progress message id (or "draft"), slot, topic id.
+function spawnDaemon(ctx, messageId) {
   try {
-    const args = [DAEMON_SCRIPT, chatId];
-    if (messageId) args.push(messageId);
+    const args = [DAEMON_SCRIPT, String(ctx.chat_id), messageId || '', P.slot, String(inThread(ctx).message_thread_id || '')];
     const child = spawn('node', args, { detached: true, stdio: 'ignore' });
     child.unref();
   } catch {}

@@ -6,11 +6,41 @@ const os = require('os');
 const path = require('path');
 
 const tmpDir = os.tmpdir();
-const LOG_FILE = path.join(tmpDir, 'telegram-progress.jsonl');
-const PID_FILE = path.join(tmpDir, 'telegram-typing-pid');
-const STOP_FILE = path.join(tmpDir, 'telegram-typing-stop');
-const CURRENT_TOOL_FILE = path.join(tmpDir, 'telegram-current-tool.txt');
-const ACTIVE_FILE = path.join(tmpDir, 'telegram-active.json');
+
+// Progress state lives in a "slot" per conversation so sessions working in
+// different private-chat topics can run turns at once: the main chat uses the
+// original file names (slot ''), topic <id> of chat <c> appends "-t<c>_<id>"
+// (thread ids are per chat). Keep in sync with slotSuffix() in topics.ts. P holds the current slot's paths; scripts
+// pick a slot with useSlot() before touching any file.
+const P = {};
+function useSlot(slot) {
+  const s = slot || '';
+  P.slot = s;
+  P.LOG_FILE = path.join(tmpDir, `telegram-progress${s}.jsonl`);
+  P.PID_FILE = path.join(tmpDir, `telegram-typing-pid${s}`);
+  P.STOP_FILE = path.join(tmpDir, `telegram-typing-stop${s}`);
+  P.CURRENT_TOOL_FILE = path.join(tmpDir, `telegram-current-tool${s}.txt`);
+  P.ACTIVE_FILE = path.join(tmpDir, `telegram-active${s}.json`);
+  return P;
+}
+useSlot('');
+
+const SLOT_RE = /^(-t-?\d+_\d+)?$/;
+function slotFor(chatId, threadId) {
+  const n = Number(threadId);
+  const c = String(chatId == null ? '' : chatId);
+  return /^-?\d+$/.test(c) && threadId != null && threadId !== '' && Number.isInteger(n) && n > 0 ? `-t${c}_${n}` : '';
+}
+
+// Slots that currently have an active-turn file.
+function listActiveSlots() {
+  try {
+    return fs.readdirSync(tmpDir)
+      .map(f => /^telegram-active(-t-?\d+_\d+)?\.json$/.exec(f))
+      .filter(Boolean)
+      .map(m => m[1] || '');
+  } catch { return []; }
+}
 // Same resolution as server.ts: TELEGRAM_STATE_DIR, else the Claude config
 // dir (CLAUDE_CONFIG_DIR or ~/.claude) + channels/telegram.
 const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
@@ -41,7 +71,7 @@ function escapeHtml(text) {
 
 function readProgressLog() {
   try {
-    const raw = fs.readFileSync(LOG_FILE, 'utf8').trim();
+    const raw = fs.readFileSync(P.LOG_FILE, 'utf8').trim();
     if (!raw) return [];
     return raw.split('\n').map(line => {
       try { return JSON.parse(line); } catch { return null; }
@@ -51,13 +81,13 @@ function readProgressLog() {
 
 function writeProgressLog(entries) {
   try {
-    fs.writeFileSync(LOG_FILE, entries.map(e => JSON.stringify(e)).join('\n') + '\n');
+    fs.writeFileSync(P.LOG_FILE, entries.map(e => JSON.stringify(e)).join('\n') + '\n');
   } catch {}
 }
 
 function readCurrentTool() {
   try {
-    const label = fs.readFileSync(CURRENT_TOOL_FILE, 'utf8').trim();
+    const label = fs.readFileSync(P.CURRENT_TOOL_FILE, 'utf8').trim();
     return label || null;
   } catch { return null; }
 }
@@ -135,7 +165,7 @@ function formatProgressFinalHtml(entries, elapsedSec, stopped = false) {
 }
 
 module.exports = {
-  LOG_FILE, PID_FILE, STOP_FILE, CURRENT_TOOL_FILE, ACTIVE_FILE, STATE_DIR, STOP_MARKUP,
+  P, useSlot, slotFor, SLOT_RE, listActiveSlots, STATE_DIR, STOP_MARKUP,
   readToken, escapeHtml,
   readProgressLog, writeProgressLog, readCurrentTool,
   formatProgress, formatProgressMarkdown, formatProgressFinalHtml,

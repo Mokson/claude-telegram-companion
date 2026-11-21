@@ -1,5 +1,28 @@
 # Changelog
 
+## v3.0.0
+
+### Breaking
+
+- With topic mode on for the bot, a private chat is split per session: each channel session gets its own topic, its messages, button taps and Stop presses go only to that session, and replies default to the topic the last message came from. Messages in the main chat still go to the polling leader. `TELEGRAM_SESSION_TOPICS=0` keeps the old single-conversation behaviour.
+- Topic progress state files are named per chat and topic (`telegram-active-t<chat>_<thread>.json` and siblings). Main-chat files keep their names.
+
+### Added
+
+- **Per-session DM topics** (Bot API 9.3 private-chat topics): when the bot has topic mode on, every channel session claims a topic in each allowlisted private chat, keyed by its project directory and persisted in `topics.json`. A restarted session takes its topic back; a second live session on the same project gets `name (2)`. The polling leader hands topic updates (messages, button taps, draft stops) to the owning session through `topic-inbox/<chat>_<thread>/`; the owner deletes a file only after Claude has the notification. Replies default to the thread the last message came from. Progress state is per topic (`telegram-active-t<id>.json` and siblings), so sessions in different topics run turns at once with their own progress message and Stop button. A topic whose session is gone answers with a "session isn't running" notice once per 10 minutes. `TELEGRAM_SESSION_TOPICS=0` turns it off.
+- **Buttons inside rich messages** (Bot API 10.x): `[Label](tg://button?data=..&style=..)` in a `format: "markdown"` reply becomes an inline button; a line of them becomes a row. A tap disables them all and marks the chosen one ✓, like keyboard buttons. On the MarkdownV2 fallback they move into the inline keyboard.
+- `force_reply` on the reply tool opens the reply field on the user's side.
+- Inbound replies carry `reply_to_text` (now also for rich messages) and `reply_to_quote` (the part the user quoted).
+- Usage-limit reset and login-expiry times render as date_time entities, shown in the reader's local time zone.
+
+### Fixed
+
+- Hook gates match the per-topic active files, and each hook works only on the progress slot its own session claimed, matched on the inbound message id rather than the chat alone. A stale slot of the session no longer holds it back from a new one, and a Telegram tool call can't delete or take over a fresh context another session received.
+- Topic inbox delivery is crash-safe: files are written aside and renamed, named by `update_id` (Telegram's order; a redelivered update doesn't queue twice), and deleted only after Claude has the notification. The leader's own topic uses the inbox too, so its messages can't replay into another project's session.
+- The topic registry lock records its holder and is reclaimed when the holder dies; a failed topic claim is retried every minute; release on exit happens only under the lock. Topic owners are checked by pid and process start time, so a recycled pid doesn't keep a topic.
+- Permission decisions and button taps count only once Claude has them: a failed delivery leaves the request answerable and the tap retryable.
+- On the MarkdownV2 fallback, a reply or edit with only in-text buttons keeps a body, and `edit_message` moves its in-text buttons into the keyboard. `ack` types in the conversation's topic. Button syntax inside inline code stays literal.
+
 ## v2.11.3
 
 ### Changed
